@@ -1,0 +1,994 @@
+# tokencap: Architecture Document
+
+> **For Claude Code:** Read this entire document before writing any code. This is the
+> single source of truth for all architectural decisions. When in doubt, refer back here.
+> Every component has a Makefile. If you are writing a component that does not have one,
+> stop and create it first.
+
+---
+
+## Executive Summary
+
+tokencap is a Python client wrapper library that gives developers visibility into
+token usage across agents and enforcement of token budgets. It wraps LLM provider
+clients in-process, tracks usage against multi-dimensional budgets, and executes
+configurable policy actions when thresholds are crossed.
+
+It works in two modes:
+
+- **Zero-infra mode** (default): SQLite-backed, no external dependencies. Multiple
+  agents and processes on the same machine share state via a single file.
+  Works out of the box with `pip install tokencap`.
+- **Distributed mode**: Redis-backed, atomic enforcement across any number of
+  machines and processes. One-line upgrade. Identical public API.
+
+The public API is identical in both modes. The backend is an implementation detail
+the developer switches with a single constructor argument.
+
+---
+
+## What This System Does (And Deliberately Does Not Do)
+
+**Does:**
+- Wrap LLM provider clients (Anthropic, OpenAI) in-process. No proxy, no network change.
+- Provide real-time visibility into token usage across agents and dimensions
+- Estimate tokens before each call and reconcile actual usage after
+- Track usage against multiple simultaneous budget dimensions (per-run, per-tenant,
+  per-day, or any custom dimension the developer defines)
+- Execute policy actions at configurable thresholds: WARN, BLOCK, DEGRADE, WEBHOOK
+- Emit OTEL metrics after each call (no-ops silently if opentelemetry-api not installed)
+- Expose programmatic budget status via get_status()
+
+**Does NOT:**
+- Proxy traffic at the network layer (no MITM, no HTTP interception)
+- Store prompt or response content anywhere
+- Manage billing, invoicing, or payment
+- Provide a UI, dashboard, or HTTP server in v0
+- Support providers other than Anthropic and OpenAI in v0
+- Make opinions about which model to degrade to (caller supplies the target model)
+
+---
+
+## Architecture Diagram
+
+```
+                        User Code
+                 (anthropic.Anthropic() /
+                    openai.OpenAI())
+                          |
+               wrap_anthropic() / wrap_openai()
+                          |
+              +-----------+-----------+
+              |                       |
+     GuardedAnthropic          GuardedOpenAI
+      (interceptor/)            (interceptor/)
+              |                       |
+              +-----------+-----------+
+                          |
+                   InterceptorBase
+                   (interceptor/base.py)
+                    pre_call / post_call
+                          |
+          +---------------+---------------+
+          |               |               |
+      Backend          Provider         Policy
+      Protocol         Protocol         Engine
+    (backends/)      (providers/)    (core/policy.py)
+          |               |
+    +-----+-----+    +----+----+
+    |           |    |         |
+ SQLite       Redis  Anthropic  OpenAI
+ Backend     Backend Provider  Provider
+ (default)  (multi-
+            machine)
+          |
+          +-- Telemetry (telemetry/otel.py)
+          |   no-op if opentelemetry-api not installed
+          |
+          +-- Status (status/api.py)
+              get_status() -> StatusResponse
+```
+
+**Data flow for a single LLM call:**
+
+```
+User code calls client.messages.create(...)
+    |
+    v
+GuardedAnthropic.messages.create()
+    |
+    v
+InterceptorBase.pre_call()
+    |-- provider.estimate_tokens(request_kwargs)
+    |-- backend.check_and_increment(keys, estimated)
+    |       |-- allowed=False: raise BudgetExceeded (call never made)
+    |       |-- allowed=True:  continue
+    |-- policy.evaluate_thresholds(states)
+    |       |-- fire WARN callbacks
+    |       |-- post WEBHOOK in background thread
+    |-- [if DEGRADE crossed] copy request_kwargs, swap model
+    |
+    v
+Actual LLM API call
+    |
+    v
+InterceptorBase.post_call()
+    |-- provider.extract_usage(response)
+    |-- backend.force_increment(keys, delta)  [never rejects]
+    |-- otel.emit(span, metrics)
+    |
+    v
+Response returned to user code unchanged
+```
+
+---
+
+## Repository Structure
+
+```
+tokencap/
+├── ARCHITECTURE.md          # This file
+├── DECISIONS.md             # Why decisions were made
+├── CLAUDE.md                # Standing rules for Claude Code sessions
+├── README.md                # User-facing documentation
+├── pyproject.toml           # Package metadata and dependencies
+├── Makefile                 # lint, test, build, publish targets
+│
+├── tokencap/
+│   ├── __init__.py          # Public API surface only: no logic here
+│   ├── py.typed             # PEP 561 marker: enables mypy for downstream users
+│   │
+│   ├── core/
+│   │   ├── types.py         # BudgetKey, BudgetState, CheckResult,
+│   │   │                    # TokenUsage: pure dataclasses, no logic
+│   │   ├── policy.py        # Policy, DimensionPolicy, Threshold, Action
+│   │   ├── guard.py         # Guard: main orchestrator, owns backend + providers
+│   │   └── exceptions.py    # BudgetExceeded, BackendError, ConfigurationError
+│   │
+│   ├── backends/
+│   │   ├── protocol.py      # Backend Protocol: the seam between Guard and storage
+│   │   ├── sqlite.py        # SQLiteBackend: zero-infra default
+│   │   └── redis.py         # RedisBackend: distributed mode
+│   │
+│   ├── providers/
+│   │   ├── protocol.py      # Provider Protocol: token estimation + usage extraction
+│   │   ├── anthropic.py     # AnthropicProvider
+│   │   └── openai.py        # OpenAIProvider
+│   │
+│   ├── interceptor/
+│   │   ├── base.py          # InterceptorBase: pre/post call logic, provider-agnostic
+│   │   ├── anthropic.py     # GuardedAnthropic: wraps sync + async Anthropic clients
+│   │   └── openai.py        # GuardedOpenAI: wraps openai.OpenAI
+│   │
+│   ├── telemetry/
+│   │   └── otel.py          # OTEL metric emission: no-ops if not installed
+│   │
+│   └── status/
+│       └── api.py           # StatusResponse dataclass + get_status() implementation
+│
+└── tests/
+    ├── unit/
+    │   ├── test_backends.py
+    │   ├── test_policy.py
+    │   ├── test_providers.py
+    │   └── test_interceptor.py
+    ├── integration/
+    │   └── test_full_pipeline.py  # Skipped in CI without API keys
+    └── conftest.py                # Shared fixtures: mock providers, mock backends
+```
+
+---
+
+## Core Types (core/types.py)
+
+Pure dataclasses. No business logic. Every other module imports from here.
+Nothing in this file imports from any other tokencap module.
+
+```python
+from __future__ import annotations
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class BudgetKey:
+    """Uniquely identifies a budget counter in the backend store."""
+    dimension: str   # e.g. "session", "tenant_daily", "tenant_monthly"
+    identifier: str  # e.g. "run_abc123", "tenant_acme:2026-03-27"
+
+
+@dataclass
+class BudgetState:
+    """Current snapshot of a single budget dimension. Read-only view."""
+    key: BudgetKey
+    limit: int        # tokens: the authoritative enforcement unit
+    used: int         # tokens consumed so far in this period
+    remaining: int    # tokens left (may be negative after force_increment)
+    pct_used: float   # used / limit: may exceed 1.0 after reconciliation
+    cost_usd: float   # display-only derived value: never stored, never enforced
+
+
+@dataclass
+class CheckResult:
+    """Outcome of a check_and_increment call."""
+    allowed: bool
+    states: dict[str, BudgetState]  # keyed by dimension name
+    violated: list[str]             # dimension names that caused allowed=False
+
+
+@dataclass
+class TokenUsage:
+    """Actual token counts extracted from a provider response."""
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+
+    @property
+    def total(self) -> int:
+        """Input + output tokens only. Cache tokens are tracked separately for
+        cost calculation but excluded from the enforcement total to avoid
+        double-counting on Anthropic prompt cache hits."""
+        return self.input_tokens + self.output_tokens
+```
+
+---
+
+## The Backend Protocol (backends/protocol.py)
+
+The most critical interface in the system. Both `SQLiteBackend` and `RedisBackend`
+implement it. The Guard never touches backend internals. It uses only this protocol.
+Adding methods here requires updating ARCHITECTURE.md first.
+
+```python
+from __future__ import annotations
+from typing import Protocol, runtime_checkable
+from tokencap.core.types import BudgetKey, BudgetState, CheckResult
+
+
+@runtime_checkable
+class Backend(Protocol):
+
+    def check_and_increment(
+        self,
+        keys: list[BudgetKey],
+        tokens: int,
+    ) -> CheckResult:
+        """
+        Atomic check-then-increment across all keys.
+
+        If ALL keys are within their limits: increment all by `tokens` and
+        return CheckResult(allowed=True, states={...}, violated=[]).
+
+        If ANY key is at or over its limit: increment nothing and return
+        CheckResult(allowed=False, states={...}, violated=[...]).
+
+        Atomicity is non-negotiable. Partial increments corrupt the ledger.
+        Used for enforcement decisions only. For post-call reconciliation
+        use force_increment().
+        """
+        ...
+
+    def force_increment(
+        self,
+        keys: list[BudgetKey],
+        tokens: int,
+    ) -> dict[str, BudgetState]:
+        """
+        Unconditional increment. Never rejects, never raises.
+
+        Used exclusively for post-call reconciliation: debiting the delta
+        between the pre-call estimate and the actual token count. A completed
+        API call cannot be undone, so this increment must always succeed
+        regardless of current budget state.
+
+        Returns updated states for telemetry. Does not evaluate thresholds.
+        """
+        ...
+
+    def get_states(self, keys: list[BudgetKey]) -> dict[str, BudgetState]:
+        """
+        Non-atomic read of current state for a list of keys.
+        Used for status queries only. Never for enforcement decisions.
+        """
+        ...
+
+    def set_limit(self, key: BudgetKey, limit: int) -> None:
+        """
+        Register or update a budget limit for a key. Idempotent.
+        Called during Guard initialisation for each configured dimension.
+        """
+        ...
+
+    def reset(self, key: BudgetKey) -> None:
+        """
+        Reset used_tokens to zero. Does not remove or change the limit.
+        Used for period resets (daily, hourly schedules) and in tests.
+        """
+        ...
+```
+
+### SQLiteBackend (backends/sqlite.py)
+
+Default file path: `tokencap.db` in the current working directory.
+Overridable: `SQLiteBackend(path="./data/tokencap.db")`.
+
+Multiple agents or processes on the same machine share state automatically as
+long as they point to the same file. `check_and_increment` uses `BEGIN IMMEDIATE`
+to serialise writes, so concurrent increments are safe. The limitation is machine
+scope: SQLite does not work across separate machines. For that, use `RedisBackend`.
+
+`force_increment` uses a plain `BEGIN` transaction with no limit check.
+
+Schema:
+```sql
+CREATE TABLE IF NOT EXISTS budgets (
+    key_dimension  TEXT    NOT NULL,
+    key_identifier TEXT    NOT NULL,
+    limit_tokens   INTEGER NOT NULL,
+    used_tokens    INTEGER NOT NULL DEFAULT 0,
+    updated_at     TEXT    NOT NULL,
+    PRIMARY KEY (key_dimension, key_identifier)
+);
+```
+
+### RedisBackend (backends/redis.py)
+
+All writes use Lua scripts. Lua execution in Redis is atomic by definition.
+Two scripts:
+
+**check_and_increment Lua script:**
+1. Read `used` for all keys
+2. Read `limit` for all keys
+3. If any `(used + tokens) > limit`: return REJECT with violating key names
+4. Otherwise: `INCRBY` all used keys by `tokens`, return ALLOW with final states
+
+**force_increment Lua script:**
+1. `INCRBY` all used keys by `tokens` unconditionally
+2. Return updated states
+
+Key format: `tokencap:used:{dimension}:{identifier}`
+Limit key format: `tokencap:limit:{dimension}:{identifier}`
+
+The `{identifier}` portion is treated as an opaque string. Colons within the
+identifier (e.g. `acme:2026-03-27`) are fine. Redis keys are plain strings, not
+parsed paths. The prefix `tokencap:used:` and `tokencap:limit:` is always the
+delimiter boundary.
+
+Constructor: `RedisBackend(url="redis://localhost:6379")`
+
+If `redis` is not installed and `RedisBackend` is instantiated, raise:
+```python
+raise ImportError(
+    "RedisBackend requires the redis package. "
+    "Install it with: pip install tokencap[redis]"
+)
+```
+Never let a bare `ModuleNotFoundError` reach user code.
+
+---
+
+## The Provider Protocol (providers/protocol.py)
+
+```python
+from __future__ import annotations
+from typing import Any, Protocol
+from tokencap.core.types import TokenUsage
+
+
+class Provider(Protocol):
+
+    def estimate_tokens(self, request_kwargs: dict[str, Any]) -> int:
+        """
+        Estimate token count from request kwargs before the API call.
+        May undercount. Actual usage is reconciled post-call via force_increment.
+        Must never raise. Return a conservative estimate on any failure.
+        """
+        ...
+
+    def extract_usage(self, response: Any) -> TokenUsage:
+        """
+        Extract actual token usage from the provider response object.
+        Must handle all response types the provider returns (sync, streaming).
+        Must never raise. Return TokenUsage(0, 0) on any failure.
+        """
+        ...
+
+    def get_model(self, request_kwargs: dict[str, Any]) -> str:
+        """
+        Extract the model name string from request kwargs.
+        Returns an empty string on failure. Never raises.
+        """
+        ...
+
+    def token_cost_usd(self, model: str, usage: TokenUsage) -> float:
+        """
+        Compute dollar cost for display purposes only.
+        Never used for enforcement decisions.
+        Returns 0.0 for unknown models. Never raises.
+        """
+        ...
+```
+
+### AnthropicProvider (providers/anthropic.py)
+
+- `estimate_tokens`: calls `anthropic.Anthropic().count_tokens()` on the messages
+  list if available. Falls back to `sum(len(str(m)) for m in messages) // 4`.
+- `extract_usage`: reads `response.usage.input_tokens`,
+  `response.usage.output_tokens`, `response.usage.cache_read_input_tokens`,
+  `response.usage.cache_creation_input_tokens`. All fields default to 0 if absent.
+- `token_cost_usd`: pricing dict keyed by model string. Version-suffixed models
+  (e.g. `claude-sonnet-4-6-20251022`) strip the date suffix and fall back to the
+  base model. Returns 0.0 for unknown models.
+
+Pricing table covers: `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`,
+`claude-3-opus`, `claude-3-sonnet`, `claude-3-haiku`. Maintained manually in the file.
+
+### OpenAIProvider (providers/openai.py)
+
+- `estimate_tokens`: uses `tiktoken.encoding_for_model(model)` if tiktoken is
+  installed. Falls back to character count // 4. Never raises.
+- `extract_usage`: reads `response.usage.prompt_tokens` and
+  `response.usage.completion_tokens`. Defaults to 0 if absent.
+- `token_cost_usd`: same pattern as Anthropic. Covers `gpt-4o`, `gpt-4o-mini`,
+  `gpt-4-turbo`, `gpt-4`, `gpt-3.5-turbo`, `o1`, `o1-mini`, `o3`, `o3-mini`,
+  `o4-mini`.
+
+---
+
+## The Interceptor (interceptor/)
+
+### base.py: InterceptorBase
+
+Provider-agnostic. Receives a `Provider` and a `Guard`. Implements the call flow
+shared by `GuardedAnthropic` and `GuardedOpenAI`.
+
+**Pre-call sequence:**
+1. Estimate tokens: `provider.estimate_tokens(request_kwargs)`
+2. Build `BudgetKey` list from guard's active dimensions and identifiers
+3. Call `backend.check_and_increment(keys, estimated_tokens)`
+4. If `CheckResult.allowed is False`:
+   - Raise `BudgetExceeded` with full `CheckResult` attached
+   - The API call is never made
+5. Evaluate thresholds on returned states:
+   - Fire WARN callbacks for any newly-crossed thresholds
+   - Post WEBHOOK payloads in background threads for any newly-crossed thresholds
+6. If a DEGRADE threshold has been newly crossed:
+   - Create a **copy** of `request_kwargs`. Never mutate the caller's dict.
+   - Swap `model` in the copy to `action.degrade_to`
+   - Proceed with the copied kwargs
+   - Record `original_model` for OTEL span
+
+**Post-call sequence:**
+1. Extract actual usage: `provider.extract_usage(response)`
+2. Compute delta: `actual.total - estimated_tokens`
+3. If delta > 0: call `backend.force_increment(keys, delta)`. This never raises and never rejects.
+4. Emit OTEL span and metrics
+5. Return original response to caller unchanged
+
+**WEBHOOK detail:** All webhook HTTP posts run in a background daemon thread.
+They never block the call path. Failures are logged at `WARNING` level and
+swallowed. A webhook failure must never cause a call to fail.
+
+**DEGRADE persistence:** Once a DEGRADE threshold fires for a given key, all
+subsequent calls on that key use the degraded model until the budget period resets.
+The fired state is stored in the backend so it survives across `Guard` instances
+in distributed mode.
+
+### anthropic.py: GuardedAnthropic
+
+Wraps both `anthropic.Anthropic` (sync) and `anthropic.AsyncAnthropic` (async)
+using `__getattr__` delegation. All attribute access passes through to the
+underlying client except `.messages`, which returns a `GuardedMessages` proxy.
+
+```python
+class GuardedAnthropic:
+    def __init__(self, client: anthropic.Anthropic, guard: Guard) -> None: ...
+
+    @property
+    def messages(self) -> GuardedMessages: ...
+
+    def __getattr__(self, name: str) -> Any:
+        # api_key, base_url, and every other attribute pass through unchanged
+        return getattr(self._client, name)
+```
+
+`GuardedMessages` proxies:
+- `.create(**kwargs)`: sync, through `InterceptorBase.call()`
+- `.stream(**kwargs)`: context manager, through `InterceptorBase.call()`.
+  Token usage is extracted from the final `message_stop` event.
+- `.create(**kwargs)` on async client: awaitable, through `InterceptorBase.call_async()`
+
+`tokencap.wrap()` detects whether the passed client is sync or async and returns
+the correct wrapper. The developer uses the same `wrap()` call in both cases.
+
+Note: `__getattr__` delegation means static type checkers will not see the full
+Anthropic client interface on `GuardedAnthropic`. This is an accepted trade-off
+for transparent wrapping. A stub file (`.pyi`) can be added in v0.2 if this causes
+downstream type-checking friction.
+
+### openai.py: GuardedOpenAI
+
+Same delegation pattern. Proxies `.chat.completions.create()` through
+`InterceptorBase.call()`. All other attributes pass through to the underlying client.
+
+---
+
+## The Policy Engine (core/policy.py)
+
+```python
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Callable, Literal
+
+if TYPE_CHECKING:
+    from tokencap.status.api import StatusResponse
+
+
+@dataclass
+class Action:
+    """A single action executed when a threshold is crossed."""
+    kind: Literal["WARN", "BLOCK", "DEGRADE", "WEBHOOK"]
+    webhook_url: str | None = None                              # WEBHOOK only
+    degrade_to: str | None = None                              # DEGRADE only
+    callback: Callable[[StatusResponse], None] | None = None   # WARN only
+
+
+@dataclass
+class Threshold:
+    """
+    A trigger point within a dimension. Fires at most once per budget period.
+
+    at_pct must be in the range (0.0, 1.0]. Values outside this range raise
+    ValueError in __post_init__.
+    """
+    at_pct: float           # e.g. 0.8 fires at 80% of the limit
+    actions: list[Action]   # executed in order when this threshold is newly crossed
+
+    def __post_init__(self) -> None:
+        if not (0.0 < self.at_pct <= 1.0):
+            raise ValueError(
+                f"Threshold.at_pct must be in (0.0, 1.0], got {self.at_pct}"
+            )
+
+
+@dataclass
+class DimensionPolicy:
+    """Budget configuration for a single named dimension."""
+    limit: int                                        # tokens
+    thresholds: list[Threshold] = field(default_factory=list)
+    reset_every: Literal["day", "hour"] | None = None
+
+    def __post_init__(self) -> None:
+        # Ensure thresholds are always evaluated in ascending order
+        self.thresholds = sorted(self.thresholds, key=lambda t: t.at_pct)
+
+
+@dataclass
+class Policy:
+    """Complete budget policy across all dimensions."""
+    dimensions: dict[str, DimensionPolicy]
+    name: str = "default"
+```
+
+**Threshold fire-once rule:** A threshold fires exactly once per budget period
+per `BudgetKey`. After firing, the backend records it as fired. It does not
+re-fire until the period resets via `backend.reset()`. This prevents alert storms
+when many calls are made after crossing a threshold.
+
+**No thresholds means tracking only:** A `DimensionPolicy` with an empty thresholds
+list tracks token usage but takes no action at any usage level. This is intentional
+and correct. Visibility without enforcement is a valid use case. See D-019.
+
+**Action execution order:** All actions on a threshold run in list order. If BLOCK
+is present, it executes last. WARN and WEBHOOK actions fire first so the caller
+has observable context before the exception is raised.
+
+---
+
+## The Guard (core/guard.py)
+
+Central orchestrator. Owns the backend, policy, provider registry, and OTEL emitter.
+Instantiated once per application lifetime (or once globally via the drop-in API).
+
+```python
+class Guard:
+    def __init__(
+        self,
+        policy: Policy,
+        identifiers: dict[str, str] | None = None,
+        backend: Backend | None = None,
+        otel_enabled: bool = True,
+        quiet: bool = False,
+    ) -> None:
+        """
+        Args:
+            policy: Budget policy defining dimensions, limits, and thresholds.
+            identifiers: Maps dimension names to their runtime identifier strings.
+                e.g. {"session": "session_abc123", "tenant_daily": "acme:2026-03-27"}
+                Dimensions not listed here receive an auto-generated UUID identifier.
+            backend: Storage backend. Defaults to SQLiteBackend().
+            otel_enabled: Whether to emit OTEL metrics and spans.
+            quiet: Suppress the startup stdout message. Default False.
+        """
+        ...
+
+    def wrap_anthropic(self, client: anthropic.Anthropic) -> GuardedAnthropic: ...
+    def wrap_openai(self, client: openai.OpenAI) -> GuardedOpenAI: ...
+    def get_status(self) -> StatusResponse: ...
+    def teardown(self) -> None: ...
+```
+
+Guard calls `backend.set_limit()` for every configured dimension during `__init__`.
+Limits are guaranteed to be registered before any call is intercepted.
+
+**How cross-agent budget sharing works**
+
+tokencap does not do anything special to share budgets across agents. Sharing
+happens because multiple Guard instances write to the same backend counter, and
+a counter is identified solely by its `(dimension, identifier)` pair.
+
+Two agents share a budget if and only if:
+- They use the same dimension name
+- They use the same identifier string for that dimension
+- They point to the same backend (same SQLite file path or same Redis instance)
+
+Two agents have independent budgets if they use different identifier strings,
+even if they share a backend.
+
+The developer controls identifiers. tokencap does not generate or manage them.
+
+**Identifier patterns**
+
+A `run` identifier is typically unique per pipeline execution. Each run gets
+its own counter, so agents within the same run share a budget, but different
+runs do not.
+
+A `tenant_daily` identifier is shared across all agents serving the same tenant
+on the same day. All agents for that tenant increment the same counter.
+
+**Concrete example: three agents sharing a daily tenant budget**
+
+```python
+# All three agents use the same identifier for "tenant_daily".
+# They point to the same Redis instance.
+# Every call from any of them debits the same counter.
+
+shared_backend = RedisBackend("redis://redis-host:6379")
+shared_identifiers = {"tenant_daily": "acme:2026-03-27"}
+
+agent_a = Guard(policy=policy, identifiers=shared_identifiers, backend=shared_backend)
+agent_b = Guard(policy=policy, identifiers=shared_identifiers, backend=shared_backend)
+agent_c = Guard(policy=policy, identifiers=shared_identifiers, backend=shared_backend)
+```
+
+With SQLite on the same machine, replace `shared_backend` with
+`SQLiteBackend(path="/shared/tokencap.db")` and the same sharing behaviour
+applies without Redis.
+
+---
+
+## Public API (__init__.py)
+
+All public symbols are listed explicitly in `__all__`. No logic lives in
+`__init__.py`: imports and re-exports only.
+
+Three usage tiers. All are first-class. Each tier adds opt-in configuration.
+Defaults are always documented, never silent.
+
+### Tier 1: zero config, tracking only
+
+```python
+import tokencap
+import anthropic
+
+client = tokencap.wrap(anthropic.Anthropic())
+response = client.messages.create(...)
+print(tokencap.get_status())
+```
+
+Calling `wrap()` without `init()` creates an implicit global Guard with these
+defaults applied transparently:
+
+- Dimension: `"session"` with an auto-generated UUID identifier
+- Backend: `SQLiteBackend("tokencap.db")` in the current working directory
+- No thresholds: usage is tracked, nothing is enforced
+
+On first call, tokencap prints to stdout:
+
+```
+[tokencap] session started: session=<uuid> backend=sqlite:tokencap.db (no limit set)
+```
+
+This makes the defaults visible. The developer always knows what tokencap is doing.
+
+### Tier 2: one argument, hard limit with automatic block
+
+```python
+client = tokencap.wrap(anthropic.Anthropic(), limit=50_000)
+```
+
+Equivalent to configuring a `"session"` dimension with a BLOCK threshold at 100%.
+Auto UUID session identifier. Same SQLite default backend.
+
+tokencap prints to stdout on first call:
+
+```
+[tokencap] session started: session=<uuid> backend=sqlite:tokencap.db limit=50000 tokens
+```
+
+### Tier 3: full control
+
+```python
+import tokencap
+import anthropic
+
+tokencap.init(
+    policy=tokencap.Policy(
+        dimensions={
+            "session": tokencap.DimensionPolicy(
+                limit=50_000,
+                thresholds=[
+                    tokencap.Threshold(at_pct=0.8, actions=[tokencap.Action(kind="WARN")]),
+                    tokencap.Threshold(at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")]),
+                ],
+            ),
+            "tenant_daily": tokencap.DimensionPolicy(
+                limit=1_000_000,
+                thresholds=[
+                    tokencap.Threshold(at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")]),
+                ],
+            ),
+        }
+    ),
+    identifiers={
+        "session": "session_abc123",
+        "tenant_daily": "acme:2026-03-27",
+    },
+)
+
+client = tokencap.wrap(anthropic.Anthropic())
+response = client.messages.create(...)
+print(tokencap.get_status())
+tokencap.teardown()
+```
+
+### Explicit mode (for multiple guards in one process)
+
+```python
+from tokencap import Guard, Policy, DimensionPolicy
+from tokencap.backends.redis import RedisBackend
+
+guard = Guard(
+    policy=Policy(dimensions={"session": DimensionPolicy(limit=50_000)}),
+    identifiers={"session": "session_abc123"},
+    backend=RedisBackend("redis://localhost:6379"),
+)
+client = guard.wrap_anthropic(anthropic.Anthropic())
+```
+
+### Default behaviour table
+
+| What you write | Dimension | Identifier | Enforcement | Backend |
+|---|---|---|---|---|
+| `wrap(client)` | `"session"` | auto UUID | none, tracking only | SQLite |
+| `wrap(client, limit=N)` | `"session"` | auto UUID | BLOCK at 100% | SQLite |
+| `init(policy=...) + wrap(client)` | as configured | as configured | as configured | as configured |
+
+Defaults are printed to stdout on first call in all cases.
+Stdout output can be suppressed with `tokencap.init(quiet=True)`.
+
+**Public API surface (`__all__` in __init__.py):**
+
+| Symbol | Description |
+|---|---|
+| `wrap(client, limit=None)` | Wrap client, optional shorthand limit |
+| `init(policy, identifiers, backend, otel_enabled, quiet)` | Initialise global Guard |
+| `get_status()` | Returns `StatusResponse` from the global Guard |
+| `teardown()` | Tear down global Guard, close backend connections |
+| `Guard` | Explicit-mode entry point |
+| `Policy` | Top-level policy container |
+| `DimensionPolicy` | Per-dimension limit and threshold configuration |
+| `Threshold` | Threshold trigger definition |
+| `Action` | Policy action definition |
+| `BudgetExceeded` | Raised on BLOCK, carries full `CheckResult` |
+| `BackendError` | Raised on unrecoverable storage failures |
+
+All other symbols are internal and may change without notice.
+
+---
+
+## OTEL Telemetry (telemetry/otel.py)
+
+Optional. Guard all imports at module level:
+
+```python
+try:
+    from opentelemetry import metrics, trace
+    OTEL_AVAILABLE = True
+except ImportError:
+    OTEL_AVAILABLE = False
+```
+
+All emission functions check `OTEL_AVAILABLE` before doing anything. They never
+raise. A telemetry failure must never surface to user code.
+
+Metrics emitted after each post-call reconciliation:
+
+| Metric | Type | Labels |
+|--------|------|--------|
+| `tokencap.tokens.used` | Counter | `provider`, `model`, `dimension` |
+| `tokencap.tokens.remaining` | Gauge | `dimension`, `identifier` |
+| `tokencap.budget.pct_used` | Gauge | `dimension`, `identifier` |
+| `tokencap.call.cost_usd` | Histogram | `provider`, `model` |
+| `tokencap.policy.action_fired` | Counter | `action_kind`, `dimension` |
+
+Span attributes per call:
+
+| Attribute | Value |
+|-----------|-------|
+| `tokencap.provider` | `"anthropic"` or `"openai"` |
+| `tokencap.model.original` | Model as requested by caller |
+| `tokencap.model.actual` | Model after any DEGRADE swap |
+| `tokencap.tokens.estimated` | Pre-call estimate |
+| `tokencap.tokens.actual` | Post-call actual |
+| `tokencap.tokens.delta` | `actual - estimated` |
+| `tokencap.allowed` | `True` / `False` |
+| `tokencap.dim.<n>.pct_used` | Per-dimension percentage at call time |
+
+---
+
+## Status API (status/api.py)
+
+```python
+from __future__ import annotations
+from dataclasses import dataclass
+from tokencap.core.types import BudgetState
+
+
+@dataclass
+class ThresholdInfo:
+    """The next unfired threshold across all active dimensions."""
+    dimension: str
+    at_pct: float
+    action_kinds: list[str]
+    triggers_at_tokens: int
+
+
+@dataclass
+class StatusResponse:
+    """Point-in-time snapshot of all budget dimensions."""
+    timestamp: str                        # ISO 8601 UTC
+    dimensions: dict[str, BudgetState]    # keyed by dimension name
+    active_policy: str                    # policy.name
+    next_threshold: ThresholdInfo | None  # nearest unfired threshold
+```
+
+`get_status()` is a synchronous read that calls `backend.get_states()` only. It
+never writes and never blocks on the call path. Safe to call inside agent loops
+or from multiple threads concurrently.
+
+---
+
+## Dependencies
+
+### Required (always installed)
+None. Zero required dependencies beyond Python 3.10+.
+
+### Optional extras
+
+| Extra | Installs | When to use |
+|-------|----------|-------------|
+| `tokencap[anthropic]` | `anthropic` | Anthropic SDK wrapping |
+| `tokencap[openai]` | `openai`, `tiktoken` | OpenAI SDK wrapping |
+| `tokencap[redis]` | `redis` | Distributed multi-process mode |
+| `tokencap[otel]` | `opentelemetry-api`, `opentelemetry-sdk` | OTEL metrics and traces |
+| `tokencap[all]` | All of the above | |
+
+The core library must import cleanly with zero optional dependencies installed.
+Every optional import is guarded. Every missing-dependency error message tells the
+user exactly what to run.
+
+---
+
+## Phases
+
+### Phase 1: Foundation (types + backends)
+
+Deliverables:
+- `tokencap/core/types.py`: all shared types, fully typed, frozen where appropriate
+- `tokencap/core/exceptions.py`: `BudgetExceeded`, `BackendError`, `ConfigurationError`
+- `tokencap/backends/protocol.py`: `Backend` Protocol including `force_increment`
+- `tokencap/backends/sqlite.py`: `SQLiteBackend`, atomic transactions
+- `tokencap/py.typed`: PEP 561 marker file (empty)
+- `pyproject.toml`: package metadata, optional dependency groups, no required deps
+- `Makefile`: `lint` (ruff + mypy), `test` (pytest), `build`, `publish` targets
+- `tests/unit/test_backends.py`: full `SQLiteBackend` coverage
+- `tests/conftest.py`: shared fixtures
+
+Acceptance criteria:
+- `SQLiteBackend` passes concurrent write test: 10 threads × 100 increments of
+  1 token each against a single key with limit 2000. Final `used_tokens` must
+  equal exactly 1000.
+- `check_and_increment` returns `allowed=False` with zero increment when limit exceeded
+- `force_increment` succeeds and increments even when limit is exceeded
+- `mypy --strict` passes on all Phase 1 files with zero errors
+- `pip install -e .` with no extras succeeds and `import tokencap` works
+
+### Phase 2: Providers + Interceptor
+
+Deliverables:
+- `tokencap/providers/protocol.py`: `Provider` Protocol, fully typed
+- `tokencap/providers/anthropic.py`: `AnthropicProvider`
+- `tokencap/providers/openai.py`: `OpenAIProvider`
+- `tokencap/interceptor/base.py`: `InterceptorBase`, full pre/post call flow
+- `tokencap/interceptor/anthropic.py`: `GuardedAnthropic`
+- `tokencap/interceptor/openai.py`: `GuardedOpenAI`
+- `tests/unit/test_providers.py`
+- `tests/unit/test_interceptor.py`
+
+Acceptance criteria:
+- Token estimation within 10% of actual for standard message payloads (fixtures,
+  no live API calls)
+- Post-call reconciliation uses `force_increment`, never `check_and_increment`
+- `GuardedAnthropic` passes all attribute access to underlying client except `.messages`
+- `GuardedOpenAI` passes all attribute access to underlying client except `.chat`
+- BLOCK raises `BudgetExceeded` before the API call is made (verified with mock)
+- DEGRADE swaps model in a copy of `request_kwargs`. Caller's dict is not mutated.
+- WEBHOOK fires in a background thread, does not block the call path
+- `mypy --strict` passes on all Phase 2 files
+
+### Phase 3: Policy Engine + Guard + Public API
+
+Deliverables:
+- `tokencap/core/policy.py`: `Policy`, `DimensionPolicy`, `Threshold`, `Action`
+- `tokencap/core/guard.py`: `Guard` orchestrator
+- `tokencap/__init__.py`: full public API with explicit `__all__`
+- `tokencap/status/api.py`: `StatusResponse`, `ThresholdInfo`, `get_status()`
+- `tests/unit/test_policy.py`
+
+Acceptance criteria:
+- `tokencap.init()` + `tokencap.wrap()` + `client.messages.create()` works
+  end-to-end with a mocked Anthropic client
+- WARN fires callback and call proceeds
+- BLOCK fires any preceding WARN/WEBHOOK actions first, then raises `BudgetExceeded`
+- DEGRADE swaps model transparently, original `request_kwargs` dict is not mutated
+- WEBHOOK fires async, verified with a local test HTTP server
+- `Threshold(at_pct=1.5)` raises `ValueError` at construction time
+- `Threshold(at_pct=0.0)` raises `ValueError` at construction time
+- Threshold does not re-fire in the same budget period (fire-once rule verified)
+- `get_status()` returns correct `BudgetState` for all configured dimensions
+- `mypy --strict` passes on all Phase 3 files
+
+### Phase 4: Redis Backend + OTEL
+
+Deliverables:
+- `tokencap/backends/redis.py`: `RedisBackend` with two Lua scripts
+- `tokencap/telemetry/otel.py`: OTEL emission, no-ops if not installed
+- Integration test: backend test suite parametrized over both backends
+- `tests/unit/test_backends.py` updated for `RedisBackend` (mocked `redis-py`)
+
+Acceptance criteria:
+- `RedisBackend` passes the same concurrent write test as `SQLiteBackend`
+- `force_increment` on `RedisBackend` succeeds even when limit is exceeded
+- Switching `backend=RedisBackend(...)` produces identical behaviour to `SQLiteBackend`
+  (parametrized test suite)
+- `import tokencap` with no optional deps: no mention of Redis or OTEL in output
+- `import tokencap` with `opentelemetry-api` absent: OTEL calls are no-ops, no error
+- `RedisBackend(...)` with `redis` absent: raises `ImportError` with install command
+- `mypy --strict` passes on all Phase 4 files
+
+### Phase 5: Tests + Docs + Publish
+
+Deliverables:
+- `tests/integration/test_full_pipeline.py`: real API calls, skipped without keys
+- `README.md`: complete, both modes shown, all actions documented, examples tested
+- `DECISIONS.md`: finalised with all decisions from the build
+- `CLAUDE.md`: finalised standing rules
+- PyPI publish via `make publish`
+- dev.to post draft
+
+Acceptance criteria:
+- `mypy --strict` passes clean across the entire codebase
+- All unit tests pass with zero failures and zero unexpected skips
+- `pip install tokencap` then README quickstart works against real provider APIs
+- Package appears on PyPI within 5 minutes of `make publish`
