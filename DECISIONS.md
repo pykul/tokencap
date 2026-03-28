@@ -810,6 +810,7 @@ is not reachable, it falls back to `MockRedisClient` and runs the same test.
 ensures the full code path is always exercised. `make redis-up` starts a local
 Redis container for developers who want the real test.
 
+
 ---
 
 ## D-049: get_status() on the wrapped client
