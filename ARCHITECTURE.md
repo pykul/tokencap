@@ -484,8 +484,10 @@ class Provider(Protocol):
 
 - `estimate_tokens`: calls `anthropic.Anthropic().count_tokens()` on the messages
   list if available. Falls back to `sum(len(str(m)) for m in messages) // 4`.
-- `extract_usage`: reads `response.usage.input_tokens`,
-  `response.usage.output_tokens`, `response.usage.cache_read_input_tokens`,
+- `extract_usage`: if the response has a callable `.parse()` method (raw response
+  wrapper from `with_raw_response`), calls it first to get the parsed message.
+  Then reads `response.usage.input_tokens`, `response.usage.output_tokens`,
+  `response.usage.cache_read_input_tokens`,
   `response.usage.cache_creation_input_tokens`. All fields default to 0 if absent.
 - `token_cost_usd`: pricing dict keyed by model string. Version-suffixed models
   (e.g. `claude-sonnet-4-6-20251022`) strip the date suffix and fall back to the
@@ -498,7 +500,9 @@ Pricing table covers: `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`
 
 - `estimate_tokens`: uses `tiktoken.encoding_for_model(model)` if tiktoken is
   installed. Falls back to character count // 4. Never raises.
-- `extract_usage`: reads `response.usage.prompt_tokens` and
+- `extract_usage`: if the response has a callable `.parse()` method (raw response
+  wrapper from `with_raw_response`), calls it first to get the parsed completion.
+  Then reads `response.usage.prompt_tokens` and
   `response.usage.completion_tokens`. Defaults to 0 if absent.
 - `token_cost_usd`: same pattern as Anthropic. Covers `gpt-4o`, `gpt-4o-mini`,
   `gpt-4-turbo`, `gpt-4`, `gpt-3.5-turbo`, `o1`, `o1-mini`, `o3`, `o3-mini`,
@@ -885,15 +889,17 @@ class GuardedMessages:
         self,
         messages: anthropic.resources.Messages,
         guard: Guard,
+        *,
+        is_async: bool,
     ) -> None:
         self._messages = messages
         self._guard = guard
+        self._is_async = is_async
 
     def create(self, **kwargs: Any) -> anthropic.types.Message:
+        if self._is_async:
+            return call_async(self._messages.create, kwargs, self._guard)
         return call(self._messages.create, kwargs, self._guard)
-
-    async def create_async(self, **kwargs: Any) -> anthropic.types.Message:
-        return await call_async(self._messages.create, kwargs, self._guard)
 
     def stream(self, **kwargs: Any) -> "GuardedStream":
         return call_stream(self._messages.stream, kwargs, self._guard)
@@ -928,24 +934,24 @@ class GuardedAnthropic:
 
     @property
     def messages(self) -> GuardedMessages:
-        return GuardedMessages(self._client.messages, self._guard)
+        return GuardedMessages(
+            self._client.messages,
+            self._guard,
+            is_async=self._is_async,
+        )
 
     def with_options(self, *args: Any, **kwargs: Any) -> "GuardedAnthropic":
         return GuardedAnthropic(
             self._client.with_options(*args, **kwargs), self._guard
         )
 
-    def with_raw_response(self, *args: Any, **kwargs: Any) -> "GuardedAnthropic":
-        return GuardedAnthropic(
-            self._client.with_raw_response(*args, **kwargs), self._guard
-        )
+    @property
+    def with_raw_response(self) -> "GuardedAnthropic":
+        return GuardedAnthropic(self._client.with_raw_response, self._guard)
 
-    def with_streaming_response(
-        self, *args: Any, **kwargs: Any
-    ) -> "GuardedAnthropic":
-        return GuardedAnthropic(
-            self._client.with_streaming_response(*args, **kwargs), self._guard
-        )
+    @property
+    def with_streaming_response(self) -> "GuardedAnthropic":
+        return GuardedAnthropic(self._client.with_streaming_response, self._guard)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
@@ -989,9 +995,12 @@ class GuardedCompletions:
         self,
         completions: openai.resources.chat.Completions,
         guard: Guard,
+        *,
+        is_async: bool,
     ) -> None:
         self._completions = completions
         self._guard = guard
+        self._is_async = is_async
 
     def create(self, **kwargs: Any) -> Any:
         # For streaming OpenAI calls, inject stream_options to get usage data.
@@ -1003,16 +1012,9 @@ class GuardedCompletions:
                 "stream_options", {"include_usage": True}
             )
             return call_stream(self._completions.create, kwargs, self._guard)
+        if self._is_async:
+            return call_async(self._completions.create, kwargs, self._guard)
         return call(self._completions.create, kwargs, self._guard)
-
-    async def create_async(self, **kwargs: Any) -> Any:
-        if kwargs.get("stream"):
-            kwargs = dict(kwargs)
-            kwargs.setdefault(
-                "stream_options", {"include_usage": True}
-            )
-            return call_stream(self._completions.create, kwargs, self._guard)
-        return await call_async(self._completions.create, kwargs, self._guard)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._completions, name)
@@ -1021,13 +1023,16 @@ class GuardedCompletions:
 class GuardedChat:
     """Proxy for openai.resources.Chat. Intercepts .completions."""
 
-    def __init__(self, chat: Any, guard: Guard) -> None:
+    def __init__(self, chat: Any, guard: Guard, *, is_async: bool) -> None:
         self._chat = chat
         self._guard = guard
+        self._is_async = is_async
 
     @property
     def completions(self) -> GuardedCompletions:
-        return GuardedCompletions(self._chat.completions, self._guard)
+        return GuardedCompletions(
+            self._chat.completions, self._guard, is_async=self._is_async
+        )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._chat, name)
@@ -1042,27 +1047,26 @@ class GuardedOpenAI:
     def __init__(self, client: openai.OpenAI, guard: Guard) -> None:
         self._client = client
         self._guard = guard
+        self._is_async = isinstance(client, openai.AsyncOpenAI)
 
     @property
     def chat(self) -> GuardedChat:
-        return GuardedChat(self._client.chat, self._guard)
+        return GuardedChat(
+            self._client.chat, self._guard, is_async=self._is_async
+        )
 
     def with_options(self, *args: Any, **kwargs: Any) -> "GuardedOpenAI":
         return GuardedOpenAI(
             self._client.with_options(*args, **kwargs), self._guard
         )
 
-    def with_raw_response(self, *args: Any, **kwargs: Any) -> "GuardedOpenAI":
-        return GuardedOpenAI(
-            self._client.with_raw_response(*args, **kwargs), self._guard
-        )
+    @property
+    def with_raw_response(self) -> "GuardedOpenAI":
+        return GuardedOpenAI(self._client.with_raw_response, self._guard)
 
-    def with_streaming_response(
-        self, *args: Any, **kwargs: Any
-    ) -> "GuardedOpenAI":
-        return GuardedOpenAI(
-            self._client.with_streaming_response(*args, **kwargs), self._guard
-        )
+    @property
+    def with_streaming_response(self) -> "GuardedOpenAI":
+        return GuardedOpenAI(self._client.with_streaming_response, self._guard)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
@@ -1531,6 +1535,7 @@ Deliverables:
 - `tokencap/interceptor/base.py`: module-level functions `call()`, `call_async()`, `call_stream()`, `GuardedStream`
 - `tokencap/interceptor/anthropic.py`: `GuardedAnthropic`
 - `tokencap/interceptor/openai.py`: `GuardedOpenAI`
+- `tokencap/status/api.py`: `StatusResponse` stub for `TYPE_CHECKING` import in `policy.py`
 - `tests/unit/test_providers.py`
 - `tests/unit/test_interceptor.py`
 - Unit tests for all Phase 2 components
@@ -1549,7 +1554,7 @@ Acceptance criteria:
 - `mypy --strict` passes on all Phase 2 files
 - All unit and integration tests pass with `make test`
 - No real API calls and no credentials required for any test
-- `mypy --strict` passes on all new test files
+- `mypy --strict` passes on all new source files under `tokencap/`
 
 ### Phase 3: Policy Engine + Guard + Public API
 
@@ -1578,7 +1583,7 @@ Acceptance criteria:
 - `mypy --strict` passes on all Phase 3 files
 - All unit and integration tests pass with `make test`
 - No real API calls and no credentials required for any test
-- `mypy --strict` passes on all new test files
+- `mypy --strict` passes on all new source files under `tokencap/`
 
 ### Phase 4: Redis Backend + OTEL
 

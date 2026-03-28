@@ -53,12 +53,19 @@ delta increment is forced. It does not check limits or fire thresholds. See D-01
 
 ## Code Quality Rules
 
-**All files must pass `mypy --strict` with no errors.** If a type annotation requires an
+**All source files under `tokencap/` must pass `mypy --strict` with no errors.**
+Test files under `tests/` are excluded from `mypy --strict`. The `make lint`
+target runs `mypy --strict tokencap/` only. If a type annotation requires an
 ignore comment, fix the underlying issue. Do not add `# type: ignore` unless
 you have exhausted all alternatives and document why in a comment.
 
 **All files must pass ruff with the project config.** Run `make lint` before
 reporting completion of any task. Fix all warnings.
+
+**Always run `make lint` and `make test` immediately before every `git commit`.**
+Never commit without a passing lint and test run in the same session. If either
+fails, fix the issue before committing. This is not optional — CI will reject
+the push and the commit must be amended or followed by a fix commit.
 
 **Every public function and class must have a docstring.** Single-line is fine
 for obvious cases. No docstring-free public API.
