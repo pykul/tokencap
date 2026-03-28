@@ -25,14 +25,6 @@ soft warnings, model degradation, or webhook alerts, whichever fits your use cas
 
 Two lines. Your existing code does not change.
 
-tokencap wraps the Anthropic and OpenAI SDKs directly. Set your provider API key
-the same way you normally would:
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...   # Anthropic
-export OPENAI_API_KEY=sk-...          # OpenAI
-```
-
 ```python
 import tokencap
 import anthropic
@@ -349,13 +341,6 @@ Across machines, switch to Redis. The API is identical:
 from tokencap.backends.redis import RedisBackend
 
 shared = RedisBackend("redis://redis-host:6379")
-```
-
-In production, read the URL from an environment variable:
-
-```python
-import os
-shared = RedisBackend(os.environ["REDIS_URL"])
 ```
 
 ```bash
