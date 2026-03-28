@@ -17,7 +17,7 @@ visibility into what each agent is spending, and without the ability to enforce 
 you find out about runaway costs from the bill, not an alert.
 
 tokencap gives you both. See exactly what every agent is spending. Enforce hard limits,
-soft warnings, model degradation, or webhook alerts, whichever policy fits your use case.
+soft warnings, model degradation, or webhook alerts, whichever fits your use case.
 
 ---
 
@@ -46,101 +46,123 @@ On the first call, tokencap prints what it is doing so there are no surprises:
 [tokencap] session started: session=a3f1c2d4 backend=sqlite:tokencap.db (no limit set)
 ```
 
-By default, tokencap tracks token usage with no enforcement. Add a limit to change that.
+By default, tokencap tracks token usage with no enforcement.
 
 ---
 
-## The wrapped client
+## Add a limit
 
-`tokencap.wrap()` returns a client that proxies the original through `__getattr__`
-delegation. The common paths work unchanged. Here is exactly what is intercepted
-and what is not.
-
-**Intercepted (tokencap tracks and enforces these):**
-- `client.messages.create()`: sync
-- `client.messages.stream()`: streaming
-- `client.messages.create()` on async client: awaitable
-- `client.with_options(...)`: returns a new wrapped client
-- `client.with_raw_response(...)`: returns a new wrapped client
-- `client.with_streaming_response(...)`: returns a new wrapped client
-
-**Pass-through (tokencap does not see these calls):**
-- `client.models.list()` and all non-messages endpoints
-- `client.beta.messages.create()`: beta features, pass through untracked
-- `client.messages.batch`: batch API, passes through untracked
-- All attributes: `client.api_key`, `client.base_url`, etc.
-
-**Client-returning methods return a wrapped client.**
-`with_options()`, `with_raw_response()`, and `with_streaming_response()` all
-create new client instances in the SDK. tokencap intercepts all three and wraps
-the result, so enforcement stays active:
-
-```python
-client = tokencap.wrap(anthropic.Anthropic())
-client2 = client.with_options(timeout=30)       # GuardedAnthropic
-client3 = client.with_raw_response()             # GuardedAnthropic
-client4 = client.with_streaming_response()       # GuardedAnthropic
-```
-
-**`isinstance` returns False.**
-`isinstance(wrapped_client, anthropic.Anthropic)` is `False`. This is a known
-limitation of the proxy pattern in Python. If your code type-checks the client,
-use the wrapper type or restructure to avoid the check. There is no workaround
-that does not involve modifying the Anthropic SDK itself.
-
-For OpenAI the same rules apply: `chat.completions.create()` is intercepted,
-everything else passes through.
-
-```python
-client = tokencap.wrap(anthropic.Anthropic())
-
-# These are tracked and enforced
-response = client.messages.create(model="claude-sonnet-4-6", ...)
-
-with client.messages.stream(model="claude-sonnet-4-6", ...) as stream:
-    for text in stream.text_stream:
-        print(text, end="", flush=True)
-
-# These pass through untracked
-models = client.models.list()
-api_key = client.api_key
-
-# Async works the same way
-async_client = tokencap.wrap(anthropic.AsyncAnthropic())
-response = await async_client.messages.create(model="claude-sonnet-4-6", ...)
-```
-
----
-
-## Adding a limit
-
-One argument.
+One argument. No other changes.
 
 ```python
 client = tokencap.wrap(anthropic.Anthropic(), limit=50_000)
 ```
 
-When the session hits 50,000 tokens, `BudgetExceededError` is raised before the next call
-is made. tokencap tells you what it set up:
+When the session hits 50,000 tokens, `BudgetExceededError` is raised before the
+next call is made:
 
-```
-[tokencap] session started: session=a3f1c2d4 backend=sqlite:tokencap.db limit=50000 tokens
+```python
+try:
+    response = client.messages.create(...)
+except tokencap.BudgetExceededError as e:
+    for dim in e.check_result.violated:
+        state = e.check_result.states[dim]
+        print(f"{dim} exceeded: {state.used:,} / {state.limit:,} tokens")
 ```
 
 ---
 
-## What the defaults are
+## Full policy
 
-tokencap never does anything silently. When you call `wrap()`, these defaults apply:
+For warnings, model degradation, and webhooks before the hard stop, pass a policy:
 
-| Setting | Default value |
-|---|---|
-| Dimension name | `"session"` |
-| Session identifier | auto-generated UUID (printed on first call) |
-| Backend | SQLite file `tokencap.db` in the current directory |
-| Enforcement | none (tracking only) unless `limit=` or `policy=` is passed |
+```python
+import tokencap
+import anthropic
 
-Pass `quiet=True` to `wrap()` to suppress the startup message.
+def on_warn(status):
+    print(f"Warning: {status.dimensions['session'].pct_used:.0%} used")
+
+client = tokencap.wrap(
+    anthropic.Anthropic(),
+    policy=tokencap.Policy(
+        dimensions={
+            "session": tokencap.DimensionPolicy(
+                limit=50_000,
+                thresholds=[
+                    tokencap.Threshold(
+                        at_pct=0.8,
+                        actions=[tokencap.Action(kind="WARN", callback=on_warn)],
+                    ),
+                    tokencap.Threshold(
+                        at_pct=0.9,
+                        actions=[tokencap.Action(kind="DEGRADE", degrade_to="claude-haiku-4-5")],
+                    ),
+                    tokencap.Threshold(
+                        at_pct=1.0,
+                        actions=[tokencap.Action(kind="BLOCK")],
+                    ),
+                ],
+            ),
+        }
+    ),
+)
+
+response = client.messages.create(...)
+print(tokencap.get_status())
+tokencap.teardown()
+```
+
+`limit` and `policy` are mutually exclusive. Passing both raises `ConfigurationError`.
+
+---
+
+## Policy actions
+
+### WARN: fire a callback and continue
+
+Fires once when the threshold is crossed. The call proceeds normally.
+
+```python
+tokencap.Threshold(
+    at_pct=0.8,
+    actions=[tokencap.Action(kind="WARN", callback=on_warn)],
+)
+```
+
+### DEGRADE: swap to a cheaper model transparently
+
+From this threshold onward, all calls use the degraded model. The calling code
+never changes.
+
+```python
+tokencap.Threshold(
+    at_pct=0.9,
+    actions=[tokencap.Action(kind="DEGRADE", degrade_to="claude-haiku-4-5")],
+)
+```
+
+### BLOCK: raise an exception before the call
+
+Fires on every call after the threshold is crossed, not just the first.
+
+```python
+tokencap.Threshold(
+    at_pct=1.0,
+    actions=[tokencap.Action(kind="BLOCK")],
+)
+```
+
+### WEBHOOK: fire an HTTP POST and continue
+
+Fire-and-forget in a background thread. Does not add latency to the call path.
+
+```python
+tokencap.Threshold(
+    at_pct=0.8,
+    actions=[tokencap.Action(kind="WEBHOOK", webhook_url="https://your-app.com/alerts")],
+)
+```
 
 ---
 
@@ -159,135 +181,90 @@ for dim, state in status.dimensions.items():
 
 ---
 
-## Policy actions
+## Why tokencap is easy to use
 
-The `limit=` shorthand always uses BLOCK. For more control, define thresholds explicitly.
+Most budget tools track dollars. The problem is that dollar cost changes every
+time a provider reprices a model, and different call types (cached tokens, batch
+API, streaming) cost different amounts. You end up with thresholds that silently
+mean something different after a pricing update.
 
-### BLOCK: raise an exception before the call
+tokencap uses token counts directly. You set a limit of 50,000 tokens. That limit
+means exactly the same thing regardless of which model you use, how the provider
+prices it, or whether tokens are cached. Dollar cost is computed for display, but
+it never drives enforcement decisions.
 
-```python
-tokencap.DimensionPolicy(
-    limit=50_000,
-    thresholds=[
-        tokencap.Threshold(
-            at_pct=1.0,
-            actions=[tokencap.Action(kind="BLOCK")],
-        ),
-    ],
-)
-```
-
-Raises `tokencap.BudgetExceededError` before the API call is made. The exception carries
-the full state of every dimension so you can see which one was violated and by how much.
-
-```python
-try:
-    response = client.messages.create(...)
-except tokencap.BudgetExceededError as e:
-    for dim in e.check_result.violated:
-        state = e.check_result.states[dim]
-        print(f"{dim} exceeded: {state.used:,} / {state.limit:,} tokens")
-```
-
-### WARN: fire a callback and continue
-
-```python
-def on_warn(status):
-    print(f"Warning: {status.dimensions['session'].pct_used:.0%} of session budget used")
-
-tokencap.Threshold(
-    at_pct=0.8,
-    actions=[tokencap.Action(kind="WARN", callback=on_warn)],
-)
-```
-
-The callback fires once when the threshold is first crossed. The call proceeds.
-
-### DEGRADE: swap to a cheaper model transparently
-
-```python
-tokencap.Threshold(
-    at_pct=0.9,
-    actions=[tokencap.Action(kind="DEGRADE", degrade_to="claude-haiku-4-5")],
-)
-```
-
-From this threshold onward, all calls use the degraded model. The calling code
-never changes. OTEL records both the original and actual model on every span.
-
-### WEBHOOK: fire an HTTP POST and continue
-
-```python
-tokencap.Threshold(
-    at_pct=0.8,
-    actions=[tokencap.Action(kind="WEBHOOK", webhook_url="https://your-app.com/alerts")],
-)
-```
-
-Posts a JSON payload with the full status to your endpoint. Fire-and-forget in a
-background thread, does not add latency to the call path.
+If you know your task takes roughly 5,000 tokens per call and you want to cap at
+10 calls, you set a limit of 50,000. No conversion needed.
 
 ---
 
-## Full policy
+## How tokencap fits alongside other tools
 
-When you need more than a simple limit, pass a policy directly to `wrap()`.
+**Observability platforms.** Platforms like LangSmith, Helicone, and infrastructure-level
+AI monitoring tools give you dashboards, traces, and historical spend analysis. They
+tell you what happened. tokencap enforces policy before and during calls. Many teams
+use both: an observability platform for the ops dashboard, tokencap for enforcement
+in the application code. They connect via tokencap's OTEL emission.
+
+**No tool at all.** The most common situation. Most teams set a provider-level
+spending cap and find out about runaway costs from the bill. tokencap is for teams
+who want enforcement in the code, not reactive alerts after the money is spent.
+
+---
+
+## The wrapped client
+
+`tokencap.wrap()` returns a proxy client. The common call paths work unchanged.
+Here is exactly what is intercepted and what passes through.
+
+**Intercepted (tokencap tracks and enforces these):**
+- `client.messages.create()`: sync
+- `client.messages.stream()`: streaming
+- `client.messages.create()` on async client: awaitable
+- `client.with_options(...)`: returns a new wrapped client
+- `client.with_raw_response(...)`: returns a new wrapped client
+- `client.with_streaming_response(...)`: returns a new wrapped client
+
+**Pass-through (tokencap does not see these calls):**
+- `client.models.list()` and all non-messages endpoints
+- `client.beta.messages.create()`: beta features, pass through untracked
+- `client.messages.batch`: batch API, passes through untracked
+- All attributes: `client.api_key`, `client.base_url`, etc.
 
 ```python
-import tokencap
-import anthropic
+client = tokencap.wrap(anthropic.Anthropic())
 
-policy = tokencap.Policy(
-    dimensions={
-        "session": tokencap.DimensionPolicy(
-            limit=50_000,
-            thresholds=[
-                tokencap.Threshold(at_pct=0.8, actions=[tokencap.Action(kind="WARN")]),
-                tokencap.Threshold(at_pct=0.95, actions=[tokencap.Action(kind="DEGRADE", degrade_to="claude-haiku-4-5")]),
-                tokencap.Threshold(at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")]),
-            ],
-        ),
-    }
-)
+# Tracked and enforced
+response = client.messages.create(model="claude-sonnet-4-6", ...)
 
-client = tokencap.wrap(anthropic.Anthropic(), policy=policy)
-response = client.messages.create(...)
-print(tokencap.get_status())
-tokencap.teardown()
+with client.messages.stream(model="claude-sonnet-4-6", ...) as stream:
+    for text in stream.text_stream:
+        print(text, end="", flush=True)
+
+# Passes through untracked
+models = client.models.list()
+api_key = client.api_key
+
+# Async works the same way
+async_client = tokencap.wrap(anthropic.AsyncAnthropic())
+response = await async_client.messages.create(model="claude-sonnet-4-6", ...)
 ```
 
-`limit` and `policy` are mutually exclusive. Passing both raises `ConfigurationError`.
+**`isinstance` returns False.**
+`isinstance(wrapped_client, anthropic.Anthropic)` is `False`. This is a known
+limitation of the proxy pattern. Stub files (`.pyi`) are planned for v0.2.
 
-A call is blocked if any dimension is at its limit. All dimensions are checked
-and incremented atomically. No partial updates.
+For OpenAI the same rules apply: `chat.completions.create()` is intercepted,
+everything else passes through.
 
 ---
 
 ## Advanced usage
 
-### Pre-configuring with init()
+### Multi-agent shared budgets
 
-Use `init()` when you need custom identifiers, a non-default backend, or
-shared state across multiple `wrap()` calls with different clients.
-
-```python
-tokencap.init(
-    policy=my_policy,
-    identifiers={"session": "session_abc123", "tenant_daily": "acme:2026-03-27"},
-)
-anthropic_client = tokencap.wrap(anthropic.Anthropic())
-openai_client = tokencap.wrap(openai.OpenAI())
-```
-
-### Multi-agent and distributed budgets
-
-Agents share a budget by using the same identifier for the same dimension. tokencap
-does not wire agents together automatically. If two Guard instances use the same
-identifier string and point at the same backend, they increment the same counter.
-If they use different identifiers, their budgets are independent.
-
-**Same machine, multiple agents or processes:** use SQLite with a shared file path.
-No Redis required.
+Multiple agents on the same machine can share a budget by pointing at the same
+SQLite file:
 
 ```python
 from tokencap import Guard, Policy, DimensionPolicy, Threshold, Action
@@ -306,73 +283,47 @@ shared_ids = {"tenant_daily": "acme:2026-03-27"}
 
 agent_a = Guard(policy=policy, identifiers=shared_ids, backend=shared)
 agent_b = Guard(policy=policy, identifiers=shared_ids, backend=shared)
+
+client_a = agent_a.wrap_anthropic(anthropic.Anthropic())
+client_b = agent_b.wrap_openai(openai.OpenAI())
 ```
 
-**Across machines:** switch to Redis. The API is identical.
+Across machines, switch to Redis. The API is identical:
 
 ```python
 from tokencap.backends.redis import RedisBackend
 
 shared = RedisBackend("redis://redis-host:6379")
-shared_ids = {"tenant_daily": "acme:2026-03-27"}
-
-agent_a = Guard(policy=policy, identifiers=shared_ids, backend=shared)
-agent_b = Guard(policy=policy, identifiers=shared_ids, backend=shared)
 ```
-
-`policy` is defined the same way as in the SQLite example above.
-
-All dimensions are checked and incremented atomically. No partial updates.
 
 ```bash
 pip install redis
 ```
 
----
+### Pre-configuring with init()
 
-### Explicit Guard mode
-
-For applications that need multiple guards with different policies, or where a
-global instance is not appropriate:
+If you need to set custom identifiers or a non-default backend before wrapping:
 
 ```python
-from tokencap import Guard, Policy, DimensionPolicy, Threshold, Action
-from tokencap.backends.redis import RedisBackend
-
-guard = Guard(
-    policy=Policy(
-        name="production",
-        dimensions={
-            "session": DimensionPolicy(limit=50_000),
-            "tenant_daily": DimensionPolicy(limit=1_000_000),
-        },
-    ),
-    identifiers={
-        "session": "session_abc123",
-        "tenant_daily": "acme:2026-03-27",
-    },
+tokencap.init(
+    policy=tokencap.Policy(...),
+    identifiers={"session": "my-run-id-123"},
     backend=RedisBackend("redis://localhost:6379"),
 )
 
-anthropic_client = guard.wrap_anthropic(anthropic.Anthropic())
-openai_client = guard.wrap_openai(openai.OpenAI())
+client = tokencap.wrap(anthropic.Anthropic())
 ```
-
-Both clients share the same guard and the same budget dimensions.
 
 ---
 
 ## OTEL integration
 
 tokencap emits OpenTelemetry metrics after every call if `opentelemetry-api` is
-installed. No configuration required. It uses the globally configured tracer and
-meter provider.
+installed. No configuration required.
 
 ```bash
 pip install opentelemetry-api
 ```
-
-Metrics emitted per call:
 
 | Metric | Type | Labels |
 |---|---|---|
@@ -382,12 +333,7 @@ Metrics emitted per call:
 | `tokencap.call.cost_usd` | Histogram | provider, model |
 | `tokencap.policy.action_fired` | Counter | action_kind, dimension |
 
-Each call also produces a span with `tokencap.model.original` and
-`tokencap.model.actual` (useful for tracking DEGRADE events), plus
-token counts and per-dimension budget state.
-
-If `opentelemetry-api` is not installed, all telemetry is a no-op. No errors,
-no warnings, no effect on behavior.
+If `opentelemetry-api` is not installed, all telemetry is a no-op.
 
 ---
 
@@ -416,105 +362,39 @@ their base model pricing automatically.
 
 ---
 
-## Installation
+## What the defaults are
 
-```bash
-pip install tokencap[anthropic]   # Anthropic SDK + token estimation
-pip install tokencap[openai]      # OpenAI SDK + tiktoken
-pip install tokencap[all]         # both providers
-```
+tokencap never does anything silently. When you call `wrap()`, these defaults apply:
 
-For distributed mode across machines: `pip install redis`
+| Setting | Default value |
+|---|---|
+| Dimension name | `"session"` |
+| Session identifier | auto-generated UUID (printed on first call) |
+| Backend | SQLite file `tokencap.db` in the current directory |
+| Enforcement | none (tracking only) unless `limit=` or `policy=` is passed |
 
-For OTEL metrics and traces: `pip install opentelemetry-api`
-
-Requires Python 3.9+.
-
----
-
-## Why tokencap is easy to use
-
-Most budget tools track dollars. The problem is that dollar cost changes every
-time a provider reprices a model, and different call types (cached tokens, batch
-API, streaming) cost different amounts. You end up with thresholds that silently
-mean something different after a pricing update.
-
-tokencap uses token counts directly. You set a limit of 50,000 tokens. That limit
-means exactly the same thing regardless of which model you use, how the provider
-prices it, or whether tokens are cached. Dollar cost is computed for display, but
-it never drives enforcement decisions.
-
-This also makes limits easy to reason about. If you know your task takes roughly
-5,000 tokens per call and you want to cap at 10 calls, you set a limit of 50,000.
-No conversion needed.
+Pass `quiet=True` to `wrap()` to suppress the startup message.
 
 ---
-
-## How tokencap fits alongside other tools
-
-**Observability platforms.** Platforms like LangSmith, Helicone, and infrastructure-level
-AI monitoring tools give you dashboards, traces, and historical spend analysis. They
-tell you what happened. tokencap enforces policy before and during calls. Many teams
-use both: an observability platform for the ops dashboard, tokencap for enforcement
-in the application code. They connect via tokencap's OTEL emission.
-
-**No tool at all.** The most common situation. Most teams set a provider-level
-spending cap and find out about runaway costs from the bill. tokencap is for teams
-who want enforcement in the code, not reactive alerts after the money is spent.
 
 ## API reference
-
-### Module-level functions
 
 ```python
 tokencap.wrap(client, limit=None, policy=None, quiet=False)
 ```
-Wraps an Anthropic or OpenAI client (sync or async). Returns a guarded client.
-`limit` is a token count shorthand for BLOCK at 100%. `policy` accepts a full
-`Policy` object for complete control. `limit` and `policy` are mutually exclusive.
-`quiet` suppresses the startup message.
-
-```python
-tokencap.init(policy, identifiers=None, backend=None, otel_enabled=True, quiet=False)
-```
-Optional. Pre-configures the global Guard. Use when you need custom identifiers,
-a non-default backend, or shared state across multiple `wrap()` calls. If you
-skip `init()`, `wrap()` creates the Guard with defaults.
+Wraps an Anthropic or OpenAI client (sync or async). `limit` is a token count
+shorthand for BLOCK at 100%. `policy` accepts a full `Policy` object. `limit`
+and `policy` are mutually exclusive.
 
 ```python
 tokencap.get_status()  # returns StatusResponse
 tokencap.teardown()    # closes backend connections, resets global Guard
 ```
 
-### Guard (explicit mode)
-
 ```python
-from tokencap import Guard
-
-guard = Guard(policy, identifiers=None, backend=None, otel_enabled=True, quiet=False)
-guard.wrap_anthropic(client)  # returns GuardedAnthropic
-guard.wrap_openai(client)     # returns GuardedOpenAI
-guard.get_status()            # returns StatusResponse
-guard.teardown()
+tokencap.init(policy, identifiers=None, backend=None, otel_enabled=True, quiet=False)
 ```
-
-### Backends
-
-```python
-from tokencap.backends.sqlite import SQLiteBackend
-SQLiteBackend(path="tokencap.db")  # default path
-
-from tokencap.backends.redis import RedisBackend
-RedisBackend(url="redis://localhost:6379")
-```
-
-### Exceptions
-
-```python
-tokencap.BudgetExceededError    # e.check_result.violated: list[str]
-                           # e.check_result.states: dict[str, BudgetState]
-tokencap.BackendError      # unrecoverable storage failure
-```
+Optional. Pre-configures the global Guard before `wrap()` is called.
 
 ### StatusResponse fields
 
@@ -533,13 +413,29 @@ state.pct_used               # float, e.g. 0.624
 state.cost_usd               # float, display only
 ```
 
-### A note on types
+### Exceptions
 
-`tokencap.wrap()` returns a `GuardedAnthropic` or `GuardedOpenAI` object, not the
-original client type. Static type checkers will see the wrapper type. If your codebase
-has type annotations expecting `anthropic.Anthropic` directly, you will see type
-errors. Stub files (`.pyi`) are planned for v0.2. For now, annotate the wrapped
-client as the wrapper type or use `# type: ignore` on the wrap call.
+```python
+tokencap.BudgetExceededError    # e.check_result.violated: list[str]
+                                # e.check_result.states: dict[str, BudgetState]
+tokencap.BackendError           # unrecoverable storage failure
+```
+
+---
+
+## Installation
+
+```bash
+pip install tokencap
+```
+
+Requires Python 3.9+.
+
+For provider-specific installs: `pip install tokencap[anthropic]`, `pip install tokencap[openai]`, or `pip install tokencap[all]`.
+
+For distributed mode: `pip install redis`
+
+For OTEL: `pip install opentelemetry-api`
 
 ---
 

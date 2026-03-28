@@ -106,8 +106,9 @@ class TestEvaluateThresholds:
         """Create a Guard with the given policy."""
         return Guard(
             policy=policy,
-            backend=mock_backend,
             identifiers={"session": "test-id"},
+            backend=mock_backend,
+            quiet=True,
         )
 
     def test_warn_fires_callback(

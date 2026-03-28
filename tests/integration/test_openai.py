@@ -42,8 +42,8 @@ class TestOpenAIIntegration:
         })
         provider = OpenAIProvider()
         guard = Guard(
-            policy=policy, backend=backend,
-            identifiers={"session": "integration-test"},
+            policy=policy, identifiers={"session": "integration-test"},
+            backend=backend, quiet=True,
         )
         client = openai.OpenAI(api_key="sk-fake-key")
         guarded = GuardedOpenAI(client, guard, provider)
@@ -74,8 +74,8 @@ class TestOpenAIIntegration:
         })
         provider = OpenAIProvider()
         guard = Guard(
-            policy=policy, backend=backend,
-            identifiers={"session": "block-test"},
+            policy=policy, identifiers={"session": "block-test"},
+            backend=backend, quiet=True,
         )
         client = openai.OpenAI(api_key="sk-fake-key")
         guarded = GuardedOpenAI(client, guard, provider)
@@ -97,8 +97,8 @@ class TestOpenAIIntegration:
         })
         provider = OpenAIProvider()
         guard = Guard(
-            policy=policy, backend=backend,
-            identifiers={"session": "stream-test"},
+            policy=policy, identifiers={"session": "stream-test"},
+            backend=backend, quiet=True,
         )
         client = openai.OpenAI(api_key="sk-fake-key")
         guarded = GuardedOpenAI(client, guard, provider)

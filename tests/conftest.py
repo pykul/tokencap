@@ -196,6 +196,7 @@ def stub_guard(
     """
     return Guard(
         policy=sample_policy,
-        backend=mock_backend,
         identifiers={"session": "test-id"},
+        backend=mock_backend,
+        quiet=True,
     )

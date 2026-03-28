@@ -41,8 +41,8 @@ class TestAnthropicIntegration:
         })
         provider = AnthropicProvider()
         guard = Guard(
-            policy=policy, backend=backend,
-            identifiers={"session": "integration-test"},
+            policy=policy, identifiers={"session": "integration-test"},
+            backend=backend, quiet=True,
         )
         client = anthropic.Anthropic(api_key="sk-fake-key")
         guarded = GuardedAnthropic(client, guard, provider)
@@ -74,8 +74,8 @@ class TestAnthropicIntegration:
         })
         provider = AnthropicProvider()
         guard = Guard(
-            policy=policy, backend=backend,
-            identifiers={"session": "block-test"},
+            policy=policy, identifiers={"session": "block-test"},
+            backend=backend, quiet=True,
         )
         client = anthropic.Anthropic(api_key="sk-fake-key")
         guarded = GuardedAnthropic(client, guard, provider)
@@ -101,8 +101,8 @@ class TestAnthropicIntegration:
         })
         provider = AnthropicProvider()
         guard = Guard(
-            policy=policy, backend=backend,
-            identifiers={"session": "reconcile-test"},
+            policy=policy, identifiers={"session": "reconcile-test"},
+            backend=backend, quiet=True,
         )
         client = anthropic.Anthropic(api_key="sk-fake-key")
         guarded = GuardedAnthropic(client, guard, provider)
