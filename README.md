@@ -30,6 +30,7 @@ import tokencap
 import anthropic
 
 client = tokencap.wrap(anthropic.Anthropic())
+# [tokencap] session started: session=a3f1c2d4 backend=sqlite:tokencap.db (no limit set)
 
 response = client.messages.create(
     model="claude-sonnet-4-6",
@@ -37,16 +38,14 @@ response = client.messages.create(
     messages=[{"role": "user", "content": "Summarize this document."}],
 )
 
-print(tokencap.get_status())
+status = tokencap.get_status()
+for dim, state in status.dimensions.items():
+    print(f"{dim}: {state.used:,} / {state.limit:,} tokens ({state.pct_used:.1%})")
+# session: 312 / 9,223,372,036,854,775,807 tokens (0.0%)
 ```
 
-On the first call, tokencap prints what it is doing so there are no surprises:
-
-```
-[tokencap] session started: session=a3f1c2d4 backend=sqlite:tokencap.db (no limit set)
-```
-
-By default, tokencap tracks token usage with no enforcement.
+`wrap()` prints a startup message to stdout so there are no surprises. By default,
+tokencap tracks token usage with no enforcement.
 
 ---
 
@@ -56,6 +55,7 @@ One argument. No other changes.
 
 ```python
 client = tokencap.wrap(anthropic.Anthropic(), limit=50_000)
+# [tokencap] session started: session=a3f1c2d4 backend=sqlite:tokencap.db limit=50000 tokens
 ```
 
 When the session hits 50,000 tokens, `BudgetExceededError` is raised before the
@@ -68,6 +68,7 @@ except tokencap.BudgetExceededError as e:
     for dim in e.check_result.violated:
         state = e.check_result.states[dim]
         print(f"{dim} exceeded: {state.used:,} / {state.limit:,} tokens")
+# session exceeded: 50,312 / 50,000 tokens
 ```
 
 ---
@@ -107,9 +108,41 @@ client = tokencap.wrap(
         }
     ),
 )
+# [tokencap] session started: session=a3f1c2d4 backend=sqlite:tokencap.db limit=50000 tokens
+```
 
-response = client.messages.create(...)
-print(tokencap.get_status())
+The agent makes many calls. Tokens accumulate. When 80% is crossed, the WARN
+callback fires once:
+
+```
+Warning: 82% used
+```
+
+After 90%, subsequent calls automatically use `claude-haiku-4-5` instead of the
+requested model. The calling code never changes.
+
+When the session reaches 100%, the next call raises `BudgetExceededError`:
+
+```python
+try:
+    response = client.messages.create(...)
+except tokencap.BudgetExceededError as e:
+    for dim in e.check_result.violated:
+        state = e.check_result.states[dim]
+        print(f"{dim} exceeded: {state.used:,} / {state.limit:,} tokens")
+# session exceeded: 51,200 / 50,000 tokens
+```
+
+Check the final state:
+
+```python
+status = tokencap.get_status()
+for dim, state in status.dimensions.items():
+    print(f"{dim}: {state.used:,} / {state.limit:,} tokens ({state.pct_used:.1%})")
+    print(f"  cost so far: ${state.cost_usd:.4f}")
+# session: 51,200 / 50,000 tokens (102.4%)
+#   cost so far: $0.1536
+
 tokencap.teardown()
 ```
 
@@ -369,7 +402,7 @@ tokencap never does anything silently. When you call `wrap()`, these defaults ap
 | Setting | Default value |
 |---|---|
 | Dimension name | `"session"` |
-| Session identifier | auto-generated UUID (printed on first call) |
+| Session identifier | auto-generated UUID (printed when `wrap()` is called) |
 | Backend | SQLite file `tokencap.db` in the current directory |
 | Enforcement | none (tracking only) unless `limit=` or `policy=` is passed |
 

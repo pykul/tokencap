@@ -2,8 +2,6 @@
 
 > **For Claude Code:** Read this entire document before writing any code. This is the
 > single source of truth for all architectural decisions. When in doubt, refer back here.
-> Every component has a Makefile. If you are writing a component that does not have one,
-> stop and create it first.
 
 ---
 
