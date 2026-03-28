@@ -719,3 +719,25 @@ would overwrite the provider on each `wrap_*` call, causing cross-contamination.
 By storing provider on the wrapped client, each wrapped client owns its own
 provider instance. `call()` receives provider explicitly from the caller,
 making the data flow visible and preventing any shared mutable state on Guard.
+
+---
+
+## D-043: wrap() accepts policy directly; limit and policy are mutually exclusive
+
+**Decision:** `wrap()` signature is `wrap(client, limit=None, policy=None,
+quiet=False)`. `policy` accepts a full `Policy` object. `limit` and `policy`
+are mutually exclusive — passing both raises `ConfigurationError`.
+
+**Why:** The primary product story is two lines: import and wrap. The previous
+design required `init()` + `wrap()` for full policy control, which is a
+two-step ceremony that obscures the simplicity of the product. By accepting
+`policy` directly on `wrap()`, the common case — a single client with a
+custom policy — stays at two lines.
+
+`init()` remains for advanced scenarios: pre-configuring identifiers, choosing
+a non-default backend, or sharing state across multiple `wrap()` calls with
+different SDK clients. It is not needed for the typical single-client case.
+
+`limit` and `policy` are mutually exclusive because `limit` is syntactic sugar
+for a specific policy (session dimension, BLOCK at 100%). Allowing both would
+create ambiguity about which takes precedence.

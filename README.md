@@ -131,17 +131,16 @@ is made. tokencap tells you what it set up:
 
 ## What the defaults are
 
-tokencap never does anything silently. When you call `wrap()` without `init()`,
-these defaults apply:
+tokencap never does anything silently. When you call `wrap()`, these defaults apply:
 
 | Setting | Default value |
 |---|---|
 | Dimension name | `"session"` |
 | Session identifier | auto-generated UUID (printed on first call) |
 | Backend | SQLite file `tokencap.db` in the current directory |
-| Enforcement | none (tracking only) unless `limit=` is passed |
+| Enforcement | none (tracking only) unless `limit=` or `policy=` is passed |
 
-Pass `quiet=True` to `wrap()` or `init()` to suppress the startup message.
+Pass `quiet=True` to `wrap()` to suppress the startup message.
 
 ---
 
@@ -232,49 +231,55 @@ background thread, does not add latency to the call path.
 
 ## Full policy
 
-When you need more than a simple limit, use `init()` before `wrap()`.
+When you need more than a simple limit, pass a policy directly to `wrap()`.
 
 ```python
 import tokencap
 import anthropic
 
-tokencap.init(
-    policy=tokencap.Policy(
-        dimensions={
-            "session": tokencap.DimensionPolicy(
-                limit=50_000,
-                thresholds=[
-                    tokencap.Threshold(at_pct=0.8, actions=[tokencap.Action(kind="WARN")]),
-                    tokencap.Threshold(at_pct=0.95, actions=[tokencap.Action(kind="DEGRADE", degrade_to="claude-haiku-4-5")]),
-                    tokencap.Threshold(at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")]),
-                ],
-            ),
-            "tenant_daily": tokencap.DimensionPolicy(
-                limit=1_000_000,
-                thresholds=[
-                    tokencap.Threshold(at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")]),
-                ],
-            ),
-        }
-    ),
-    identifiers={
-        "session": "session_abc123",
-        "tenant_daily": "acme:2026-03-27",
-    },
+policy = tokencap.Policy(
+    dimensions={
+        "session": tokencap.DimensionPolicy(
+            limit=50_000,
+            thresholds=[
+                tokencap.Threshold(at_pct=0.8, actions=[tokencap.Action(kind="WARN")]),
+                tokencap.Threshold(at_pct=0.95, actions=[tokencap.Action(kind="DEGRADE", degrade_to="claude-haiku-4-5")]),
+                tokencap.Threshold(at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")]),
+            ],
+        ),
+    }
 )
 
-client = tokencap.wrap(anthropic.Anthropic())
+client = tokencap.wrap(anthropic.Anthropic(), policy=policy)
 response = client.messages.create(...)
 print(tokencap.get_status())
 tokencap.teardown()
 ```
+
+`limit` and `policy` are mutually exclusive. Passing both raises `ConfigurationError`.
 
 A call is blocked if any dimension is at its limit. All dimensions are checked
 and incremented atomically. No partial updates.
 
 ---
 
-## Multi-agent and distributed usage
+## Advanced usage
+
+### Pre-configuring with init()
+
+Use `init()` when you need custom identifiers, a non-default backend, or
+shared state across multiple `wrap()` calls with different clients.
+
+```python
+tokencap.init(
+    policy=my_policy,
+    identifiers={"session": "session_abc123", "tenant_daily": "acme:2026-03-27"},
+)
+anthropic_client = tokencap.wrap(anthropic.Anthropic())
+openai_client = tokencap.wrap(openai.OpenAI())
+```
+
+### Multi-agent and distributed budgets
 
 Agents share a budget by using the same identifier for the same dimension. tokencap
 does not wire agents together automatically. If two Guard instances use the same
@@ -325,7 +330,7 @@ pip install redis
 
 ---
 
-## Explicit mode
+### Explicit Guard mode
 
 For applications that need multiple guards with different policies, or where a
 global instance is not appropriate:
@@ -462,19 +467,19 @@ who want enforcement in the code, not reactive alerts after the money is spent.
 ### Module-level functions
 
 ```python
-tokencap.wrap(client, limit=None, quiet=False)
+tokencap.wrap(client, limit=None, policy=None, quiet=False)
 ```
-Wraps an Anthropic or OpenAI client (sync or async). Returns a guarded client of
-the same type. If called without `init()`, creates an implicit Guard with defaults.
-`limit` is a token count shorthand for BLOCK at 100%. `quiet` suppresses the startup
-message.
+Wraps an Anthropic or OpenAI client (sync or async). Returns a guarded client.
+`limit` is a token count shorthand for BLOCK at 100%. `policy` accepts a full
+`Policy` object for complete control. `limit` and `policy` are mutually exclusive.
+`quiet` suppresses the startup message.
 
 ```python
 tokencap.init(policy, identifiers=None, backend=None, otel_enabled=True, quiet=False)
 ```
-Sets up the global Guard instance. Call before `wrap()` when you need full policy
-control. If you skip `init()` and call `wrap()` directly, the Guard is created
-with defaults.
+Optional. Pre-configures the global Guard. Use when you need custom identifiers,
+a non-default backend, or shared state across multiple `wrap()` calls. If you
+skip `init()`, `wrap()` creates the Guard with defaults.
 
 ```python
 tokencap.get_status()  # returns StatusResponse

@@ -1294,10 +1294,10 @@ applies without Redis.
 All public symbols are listed explicitly in `__all__`. No logic lives in
 `__init__.py`: imports and re-exports only.
 
-Three usage tiers. All are first-class. Each tier adds opt-in configuration.
+Three usage tiers. All use `wrap()`. Each tier adds opt-in configuration.
 Defaults are always documented, never silent.
 
-### Tier 1: zero config, tracking only
+### Tier 1: wrap(client) — tracking only
 
 ```python
 import tokencap
@@ -1308,8 +1308,7 @@ response = client.messages.create(...)
 print(tokencap.get_status())
 ```
 
-Calling `wrap()` without `init()` creates an implicit global Guard with these
-defaults applied transparently:
+`wrap()` creates an implicit global Guard with these defaults:
 
 - Dimension: `"session"` with an auto-generated UUID identifier
 - Backend: `SQLiteBackend("tokencap.db")` in the current working directory
@@ -1321,60 +1320,62 @@ On first call, tokencap prints to stdout:
 [tokencap] session started: session=<uuid> backend=sqlite:tokencap.db (no limit set)
 ```
 
-This makes the defaults visible. The developer always knows what tokencap is doing.
-
-### Tier 2: one argument, hard limit with automatic block
+### Tier 2: wrap(client, limit=N) — hard limit
 
 ```python
 client = tokencap.wrap(anthropic.Anthropic(), limit=50_000)
 ```
 
-Equivalent to configuring a `"session"` dimension with a BLOCK threshold at 100%.
+Equivalent to a `"session"` dimension with a BLOCK threshold at 100%.
 Auto UUID session identifier. Same SQLite default backend.
-
-tokencap prints to stdout on first call:
 
 ```
 [tokencap] session started: session=<uuid> backend=sqlite:tokencap.db limit=50000 tokens
 ```
 
-### Tier 3: full control
+### Tier 3: wrap(client, policy=...) — full policy control
 
 ```python
 import tokencap
 import anthropic
 
-tokencap.init(
-    policy=tokencap.Policy(
-        dimensions={
-            "session": tokencap.DimensionPolicy(
-                limit=50_000,
-                thresholds=[
-                    tokencap.Threshold(at_pct=0.8, actions=[tokencap.Action(kind="WARN")]),
-                    tokencap.Threshold(at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")]),
-                ],
-            ),
-            "tenant_daily": tokencap.DimensionPolicy(
-                limit=1_000_000,
-                thresholds=[
-                    tokencap.Threshold(at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")]),
-                ],
-            ),
-        }
-    ),
-    identifiers={
-        "session": "session_abc123",
-        "tenant_daily": "acme:2026-03-27",
-    },
+policy = tokencap.Policy(
+    dimensions={
+        "session": tokencap.DimensionPolicy(
+            limit=50_000,
+            thresholds=[
+                tokencap.Threshold(at_pct=0.8, actions=[tokencap.Action(kind="WARN")]),
+                tokencap.Threshold(at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")]),
+            ],
+        ),
+    }
 )
 
-client = tokencap.wrap(anthropic.Anthropic())
+client = tokencap.wrap(anthropic.Anthropic(), policy=policy)
 response = client.messages.create(...)
 print(tokencap.get_status())
 tokencap.teardown()
 ```
 
-### Explicit mode (for multiple guards in one process)
+`limit` and `policy` are mutually exclusive. Passing both raises
+`ConfigurationError`.
+
+### Advanced: init() for pre-configuration
+
+`init()` is optional. Use it when you need to configure the global Guard
+before the first `wrap()` call, or when sharing state across multiple
+`wrap()` calls with different clients.
+
+```python
+tokencap.init(
+    policy=my_policy,
+    identifiers={"session": "session_abc123", "tenant_daily": "acme:2026-03-27"},
+)
+anthropic_client = tokencap.wrap(anthropic.Anthropic())
+openai_client = tokencap.wrap(openai.OpenAI())
+```
+
+### Advanced: explicit Guard for multiple guards in one process
 
 ```python
 from tokencap import Guard, Policy, DimensionPolicy
@@ -1394,17 +1395,18 @@ client = guard.wrap_anthropic(anthropic.Anthropic())
 |---|---|---|---|---|
 | `wrap(client)` | `"session"` | auto UUID | none, tracking only | SQLite |
 | `wrap(client, limit=N)` | `"session"` | auto UUID | BLOCK at 100% | SQLite |
+| `wrap(client, policy=...)` | as configured | auto UUID per dim | as configured | SQLite |
 | `init(policy=...) + wrap(client)` | as configured | as configured | as configured | as configured |
 
 Defaults are printed to stdout on first call in all cases.
-Stdout output can be suppressed with `tokencap.init(quiet=True)`.
+Stdout output can be suppressed with `quiet=True` on `wrap()` or `init()`.
 
 **Public API surface (`__all__` in __init__.py):**
 
 | Symbol | Description |
 |---|---|
-| `wrap(client, limit=None)` | Wrap client, optional shorthand limit |
-| `init(policy, identifiers, backend, otel_enabled, quiet)` | Initialise global Guard |
+| `wrap(client, limit=None, policy=None, quiet=False)` | Wrap client, progressive config |
+| `init(policy, identifiers, backend, otel_enabled, quiet)` | Pre-configure global Guard (optional) |
 | `get_status()` | Returns `StatusResponse` from the global Guard |
 | `teardown()` | Tear down global Guard, close backend connections |
 | `Guard` | Explicit-mode entry point |
