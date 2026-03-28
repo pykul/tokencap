@@ -484,6 +484,9 @@ class Provider(Protocol):
   Then reads `response.usage.input_tokens`, `response.usage.output_tokens`,
   `response.usage.cache_read_input_tokens`,
   `response.usage.cache_creation_input_tokens`. All fields default to 0 if absent.
+
+`token_cost_usd()` is not implemented. See D-045.
+
 ### OpenAIProvider (providers/openai.py)
 
 - `estimate_tokens`: uses `tiktoken.encoding_for_model(model)` if tiktoken is
@@ -492,6 +495,8 @@ class Provider(Protocol):
   wrapper from `with_raw_response`), calls it first to get the parsed completion.
   Then reads `response.usage.prompt_tokens` and
   `response.usage.completion_tokens`. Defaults to 0 if absent.
+
+`token_cost_usd()` is not implemented. See D-045.
 
 ---
 
