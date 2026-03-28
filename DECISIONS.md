@@ -152,7 +152,7 @@ cannot trigger a BLOCK action. This is implemented as `force_increment()` on the
 Backend Protocol. See D-013 for why it is a separate method rather than a flag.
 
 **Why:** By the time reconciliation runs, the API call has already completed and the
-response is in hand. Raising BudgetExceeded at that point would confuse the caller:
+response is in hand. Raising BudgetExceededError at that point would confuse the caller:
 they have a valid response but an exception would prevent them from using it.
 Reconciliation is a bookkeeping operation to keep the ledger accurate. Enforcement
 happens in pre-call only.
@@ -539,3 +539,29 @@ as extras: Redis raises a clear `ImportError` with the install command if
 `RedisBackend` is used without it. OTEL no-ops silently if not installed. The
 developer who wants either already knows how to install a Python package. Listing
 them as extras adds friction without providing any additional value.
+
+---
+
+## D-034: Exception class named BudgetExceededError not BudgetExceeded
+
+**Decision:** The public exception for a blocked call is named
+`BudgetExceededError`, following Python stdlib naming convention
+(`ValueError`, `KeyError`, `TimeoutError`). An earlier draft used
+`BudgetExceeded` but that reads as a status flag rather than an
+exception. The N818 ruff rule enforces this convention and is
+left fully enabled.
+
+---
+
+## D-035: SQLiteBackend uses threading.Lock in addition to BEGIN IMMEDIATE
+
+**Decision:** All mutating methods on `SQLiteBackend` acquire a
+`threading.Lock` before issuing any SQL.
+
+**Why:** `BEGIN IMMEDIATE` serialises writes at the SQLite database-file level,
+which handles cross-process concurrency. However, Python's `sqlite3.Connection`
+is not thread-safe: two threads issuing statements on the same connection
+concurrently can corrupt the connection's internal state. The lock serialises
+access to the connection object within a single process. Both mechanisms are
+required: the lock for in-process thread safety, `BEGIN IMMEDIATE` for
+cross-process write serialisation.

@@ -231,3 +231,47 @@ corresponding key operations. `reset()` must clear fired records. See D-031.
 GuardedAnthropic and `chat` on GuardedOpenAI must be `@property`, not handled by
 `__getattr__`. If they were handled by `__getattr__`, the real SDK object would be
 returned and no interception would occur.
+
+---
+
+## Version Control Rules
+
+**Never push directly to main.** All work happens on a feature branch.
+Branch naming: phase-N/short-description (e.g. phase-1/foundation).
+Open a pull request when the phase is complete and all acceptance criteria
+pass. Never merge without a passing test run.
+
+---
+
+## Testing Rules
+
+**Always run the full test suite after any logic change.** A change is
+not done until tests pass. Run make test before reporting a task complete.
+
+**Add tests for every new behavior.** If you add a function, add a test.
+If you fix a bug, add a test that would have caught it. Tests live in
+tests/unit/ for unit tests and tests/integration/ for integration tests.
+
+**Unit tests mock at the function and class level.** Use unittest.mock.
+No real API calls, no real Redis connections, no real file I/O beyond
+tmp_path.
+
+**Integration tests mock at the HTTP layer.** Use pytest-httpx to
+intercept HTTP calls made by the Anthropic and OpenAI SDKs. Real SDK
+code runs, real tokencap code runs, fake HTTP responses are returned.
+No credentials required. Always run as part of make test in CI.
+
+**Live tests handle missing credentials by mocking response objects.**
+Tests in tests/live/ attempt real API calls when ANTHROPIC_API_KEY or
+OPENAI_API_KEY is present. When a key is absent, the test constructs a
+mock response object that matches the real SDK response shape and runs
+the full tokencap code path against it. The test never skips. It always
+exercises the full code path. Only the network call itself is replaced
+when credentials are missing.
+
+**Live tests run via make test-live.** They never block CI. They are not
+part of make test.
+
+**Test file naming mirrors the source tree 1:1.** tests/unit/test_backends.py
+tests tokencap/backends/. tests/unit/test_interceptor.py tests
+tokencap/interceptor/.
