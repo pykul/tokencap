@@ -152,7 +152,7 @@ cannot trigger a BLOCK action. This is implemented as `force_increment()` on the
 Backend Protocol. See D-013 for why it is a separate method rather than a flag.
 
 **Why:** By the time reconciliation runs, the API call has already completed and the
-response is in hand. Raising BudgetExceeded at that point would confuse the caller:
+response is in hand. Raising BudgetExceededError at that point would confuse the caller:
 they have a valid response but an exception would prevent them from using it.
 Reconciliation is a bookkeeping operation to keep the ledger accurate. Enforcement
 happens in pre-call only.
@@ -170,15 +170,16 @@ monitoring/observation rather than enforcement.
 
 ---
 
-## D-012: Python 3.10+ minimum
+## D-012: Python 3.9+ minimum
 
-**Decision:** Minimum supported Python version is 3.10.
+**Decision:** Minimum supported Python version is 3.9.
 
-**Why:** 3.10 introduced `match` statements (not used but available), improved type
-union syntax (`X | Y` instead of `Union[X, Y]`), and structural pattern matching.
-More practically: 3.10 is the oldest Python version still receiving security updates
-as of 2026. Supporting 3.9 or earlier would require avoiding several clean type
-annotation patterns.
+**Why:** 3.9 is the oldest Python version with broad ecosystem support for the
+libraries tokencap's users are likely to have installed (anthropic, openai).
+The type annotation concern that previously made 3.9 problematic is resolved by
+`from __future__ import annotations` at the top of every module, which makes
+`X | Y`, `list[X]`, and `dict[X, Y]` syntax valid as string annotations on 3.9+.
+No runtime feature from 3.10+ is used in the codebase.
 
 ---
 
@@ -539,3 +540,45 @@ as extras: Redis raises a clear `ImportError` with the install command if
 `RedisBackend` is used without it. OTEL no-ops silently if not installed. The
 developer who wants either already knows how to install a Python package. Listing
 them as extras adds friction without providing any additional value.
+
+---
+
+## D-034: Exception class named BudgetExceededError not BudgetExceeded
+
+**Decision:** The public exception for a blocked call is named
+`BudgetExceededError`, following Python stdlib naming convention
+(`ValueError`, `KeyError`, `TimeoutError`). An earlier draft used
+`BudgetExceeded` but that reads as a status flag rather than an
+exception. The N818 ruff rule enforces this convention and is
+left fully enabled.
+
+---
+
+## D-035: SQLiteBackend uses threading.Lock in addition to BEGIN IMMEDIATE
+
+**Decision:** All mutating methods on `SQLiteBackend` acquire a
+`threading.Lock` before issuing any SQL.
+
+**Why:** `BEGIN IMMEDIATE` serialises writes at the SQLite database-file level,
+which handles cross-process concurrency. However, Python's `sqlite3.Connection`
+is not thread-safe: two threads issuing statements on the same connection
+concurrently can corrupt the connection's internal state. The lock serialises
+access to the connection object within a single process. Both mechanisms are
+required: the lock for in-process thread safety, `BEGIN IMMEDIATE` for
+cross-process write serialisation.
+
+---
+
+## D-036: CI uses a single job, not a matrix of jobs
+
+**Decision:** The GitHub Actions CI workflow installs all five Python
+versions (3.9–3.13) in one job and loops through each to run
+`make test`. Lint runs once. The PR shows one green check, not five.
+
+**Why:** A matrix strategy creates a separate job per Python version,
+each producing its own check on the PR. Five checks add visual noise
+without proportionate value — if any version fails the single job fails,
+which is the same signal. A single job also starts faster because it
+avoids the overhead of provisioning five runners. The Makefile accepts
+`PYTHON=pythonX.Y` so each loop iteration runs tests under the correct
+interpreter.

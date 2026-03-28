@@ -100,7 +100,7 @@ GuardedAnthropic.messages.create()
 call(real_fn, kwargs, guard)          [interceptor/base.py]
     |-- provider.estimate_tokens(request_kwargs)
     |-- backend.check_and_increment(keys, estimated)
-    |       |-- allowed=False: raise BudgetExceeded (call never made)
+    |       |-- allowed=False: raise BudgetExceededError (call never made)
     |       |-- allowed=True:  continue
     |-- _evaluate_thresholds(guard, keys, states, kwargs)
     |       |-- fire WARN callbacks
@@ -141,7 +141,7 @@ tokencap/
 │   │   │                    # TokenUsage: pure dataclasses, no logic
 │   │   ├── policy.py        # Policy, DimensionPolicy, Threshold, Action
 │   │   ├── guard.py         # Guard: main orchestrator, owns backend + providers
-│   │   └── exceptions.py    # BudgetExceeded, BackendError, ConfigurationError
+│   │   └── exceptions.py    # BudgetExceededError, BackendError, ConfigurationError
 │   │
 │   ├── backends/
 │   │   ├── protocol.py      # Backend Protocol: the seam between Guard and storage
@@ -171,7 +171,7 @@ tokencap/
     │   ├── test_providers.py
     │   └── test_interceptor.py
     ├── integration/
-    │   └── test_full_pipeline.py  # Skipped in CI without API keys
+    │   └── test_full_pipeline.py  # HTTP layer mocked with pytest-httpx, always runs
     └── conftest.py                # Shared fixtures: mock providers, mock backends
 ```
 
@@ -234,7 +234,7 @@ class TokenUsage:
 ## Exceptions (core/exceptions.py)
 
 ```python
-class BudgetExceeded(Exception):
+class BudgetExceededError(Exception):
     """
     Raised by the BLOCK action before an LLM call is made.
     The call is never sent to the provider.
@@ -541,7 +541,7 @@ everything else as pass-through.
 
 ```python
 from tokencap.core.types import BudgetKey, TokenUsage
-from tokencap.core.exceptions import BudgetExceeded
+from tokencap.core.exceptions import BudgetExceededError
 from tokencap.core.guard import Guard
 from typing import Any, Callable
 import threading
@@ -630,7 +630,7 @@ def call(
 
     1. Estimate tokens
     2. Atomic check-and-increment
-    3. Raise BudgetExceeded if blocked
+    3. Raise BudgetExceededError if blocked
     4. Evaluate thresholds (WARN, WEBHOOK, DEGRADE)
     5. Make the real SDK call
     6. Reconcile actual vs estimated via force_increment
@@ -642,7 +642,7 @@ def call(
 
     result = guard.backend.check_and_increment(keys, estimated)
     if not result.allowed:
-        raise BudgetExceeded(result)
+        raise BudgetExceededError(result)
 
     call_kwargs = _evaluate_thresholds(guard, keys, result.states, kwargs)
     original_model = kwargs.get("model", "")
@@ -681,7 +681,7 @@ async def call_async(
 
     result = guard.backend.check_and_increment(keys, estimated)
     if not result.allowed:
-        raise BudgetExceeded(result)
+        raise BudgetExceededError(result)
 
     call_kwargs = _evaluate_thresholds(guard, keys, result.states, kwargs)
     original_model = kwargs.get("model", "")
@@ -721,7 +721,7 @@ def call_stream(
 
     result = guard.backend.check_and_increment(keys, estimated)
     if not result.allowed:
-        raise BudgetExceeded(result)
+        raise BudgetExceededError(result)
 
     call_kwargs = _evaluate_thresholds(guard, keys, result.states, kwargs)
     original_model = kwargs.get("model", "")
@@ -825,7 +825,7 @@ class GuardedStream:
 **Key points about streaming:**
 
 The pre-call check (`check_and_increment`) runs in `call_stream()` before the
-context manager is returned to the developer. If the budget is exceeded, `BudgetExceeded`
+context manager is returned to the developer. If the budget is exceeded, `BudgetExceededError`
 is raised before the stream is opened. The developer never enters the `with` block.
 
 Token usage reconciliation runs in `GuardedStream.__exit__()`. This fires whether
@@ -1356,7 +1356,7 @@ Stdout output can be suppressed with `tokencap.init(quiet=True)`.
 | `DimensionPolicy` | Per-dimension limit and threshold configuration |
 | `Threshold` | Threshold trigger definition |
 | `Action` | Policy action definition |
-| `BudgetExceeded` | Raised on BLOCK, carries full `CheckResult` |
+| `BudgetExceededError` | Raised on BLOCK, carries full `CheckResult` |
 | `BackendError` | Raised on unrecoverable storage failures |
 
 All other symbols are internal and may change without notice.
@@ -1438,7 +1438,7 @@ or from multiple threads concurrently.
 ## Dependencies
 
 ### Required (always installed)
-None. Zero required dependencies beyond Python 3.10+.
+None. Zero required dependencies beyond Python 3.9+.
 
 ### Optional extras
 
@@ -1467,7 +1467,7 @@ user exactly what to run.
 
 Deliverables:
 - `tokencap/core/types.py`: all shared types, fully typed, frozen where appropriate
-- `tokencap/core/exceptions.py`: `BudgetExceeded`, `BackendError`, `ConfigurationError`
+- `tokencap/core/exceptions.py`: `BudgetExceededError`, `BackendError`, `ConfigurationError`
 - `tokencap/backends/protocol.py`: `Backend` Protocol including `force_increment`, `is_threshold_fired`, `mark_threshold_fired`
 - `tokencap/backends/sqlite.py`: `SQLiteBackend`, atomic transactions
 - `tokencap/py.typed`: PEP 561 marker file (empty)
@@ -1484,6 +1484,13 @@ Acceptance criteria:
 - `force_increment` succeeds and increments even when limit is exceeded
 - `mypy --strict` passes on all Phase 1 files with zero errors
 - `pip install -e .` with no extras succeeds and `import tokencap` works
+- CI workflow present at `.github/workflows/ci.yml` and triggers on
+  pull_request to main and push to main only
+- CI runs as a single job covering Python 3.9, 3.10, 3.11, 3.12, 3.13
+- `make lint` and `make test` both pass in CI on all Python versions
+- All unit tests mock at the function/class level with no real I/O
+  beyond `tmp_path` and no real API calls
+- Test file naming mirrors the source tree 1:1
 
 ### Phase 2: Providers + Interceptor
 
@@ -1496,6 +1503,9 @@ Deliverables:
 - `tokencap/interceptor/openai.py`: `GuardedOpenAI`
 - `tests/unit/test_providers.py`
 - `tests/unit/test_interceptor.py`
+- Unit tests for all Phase 2 components
+- Integration tests for the full Anthropic and OpenAI call paths,
+  HTTP layer mocked with pytest-httpx
 
 Acceptance criteria:
 - Token estimation within 10% of actual for standard message payloads (fixtures,
@@ -1503,10 +1513,13 @@ Acceptance criteria:
 - Post-call reconciliation uses `force_increment`, never `check_and_increment`
 - `GuardedAnthropic` passes all attribute access to underlying client except `.messages`
 - `GuardedOpenAI` passes all attribute access to underlying client except `.chat`
-- BLOCK raises `BudgetExceeded` before the API call is made (verified with mock)
+- BLOCK raises `BudgetExceededError` before the API call is made (verified with mock)
 - DEGRADE swaps model in a copy of `request_kwargs`. Caller's dict is not mutated.
 - WEBHOOK fires in a background thread, does not block the call path
 - `mypy --strict` passes on all Phase 2 files
+- All unit and integration tests pass with `make test`
+- No real API calls and no credentials required for any test
+- `mypy --strict` passes on all new test files
 
 ### Phase 3: Policy Engine + Guard + Public API
 
@@ -1516,12 +1529,16 @@ Deliverables:
 - `tokencap/__init__.py`: full public API with explicit `__all__`
 - `tokencap/status/api.py`: `StatusResponse`, `ThresholdInfo`, `get_status()`
 - `tests/unit/test_policy.py`
+- Unit tests for all Phase 3 components
+- Integration tests covering the full drop-in API end-to-end,
+  all four action kinds, and multi-dimensional budgets,
+  HTTP layer mocked with pytest-httpx
 
 Acceptance criteria:
 - `tokencap.init()` + `tokencap.wrap()` + `client.messages.create()` works
   end-to-end with a mocked Anthropic client
 - WARN fires callback and call proceeds
-- BLOCK fires any preceding WARN/WEBHOOK actions first, then raises `BudgetExceeded`
+- BLOCK fires any preceding WARN/WEBHOOK actions first, then raises `BudgetExceededError`
 - DEGRADE swaps model transparently, original `request_kwargs` dict is not mutated
 - WEBHOOK fires async, verified with a local test HTTP server
 - `Threshold(at_pct=1.5)` raises `ValueError` at construction time
@@ -1529,6 +1546,9 @@ Acceptance criteria:
 - Threshold does not re-fire in the same budget period (fire-once rule verified)
 - `get_status()` returns correct `BudgetState` for all configured dimensions
 - `mypy --strict` passes on all Phase 3 files
+- All unit and integration tests pass with `make test`
+- No real API calls and no credentials required for any test
+- `mypy --strict` passes on all new test files
 
 ### Phase 4: Redis Backend + OTEL
 

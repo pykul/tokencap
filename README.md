@@ -1,5 +1,7 @@
 # tokencap
 
+[![CI](https://github.com/pykul/tokencap/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pykul/tokencap/actions/workflows/ci.yml)
+
 **Token usage visibility and budget enforcement for AI agents. Works out of the box. Scales to Redis when you need it.**
 
 ```bash
@@ -118,7 +120,7 @@ One argument.
 client = tokencap.wrap(anthropic.Anthropic(), limit=50_000)
 ```
 
-When the session hits 50,000 tokens, `BudgetExceeded` is raised before the next call
+When the session hits 50,000 tokens, `BudgetExceededError` is raised before the next call
 is made. tokencap tells you what it set up:
 
 ```
@@ -176,13 +178,13 @@ tokencap.DimensionPolicy(
 )
 ```
 
-Raises `tokencap.BudgetExceeded` before the API call is made. The exception carries
+Raises `tokencap.BudgetExceededError` before the API call is made. The exception carries
 the full state of every dimension so you can see which one was violated and by how much.
 
 ```python
 try:
     response = client.messages.create(...)
-except tokencap.BudgetExceeded as e:
+except tokencap.BudgetExceededError as e:
     for dim in e.check_result.violated:
         state = e.check_result.states[dim]
         print(f"{dim} exceeded: {state.used:,} / {state.limit:,} tokens")
@@ -421,7 +423,7 @@ For distributed mode across machines: `pip install redis`
 
 For OTEL metrics and traces: `pip install opentelemetry-api`
 
-Requires Python 3.10+.
+Requires Python 3.9+.
 
 ---
 
@@ -440,8 +442,6 @@ it never drives enforcement decisions.
 This also makes limits easy to reason about. If you know your task takes roughly
 5,000 tokens per call and you want to cap at 10 calls, you set a limit of 50,000.
 No conversion needed.
-
----
 
 ---
 
@@ -506,7 +506,7 @@ RedisBackend(url="redis://localhost:6379")
 ### Exceptions
 
 ```python
-tokencap.BudgetExceeded    # e.check_result.violated: list[str]
+tokencap.BudgetExceededError    # e.check_result.violated: list[str]
                            # e.check_result.states: dict[str, BudgetState]
 tokencap.BackendError      # unrecoverable storage failure
 ```
