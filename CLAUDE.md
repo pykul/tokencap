@@ -187,9 +187,9 @@ message is affected by `quiet`.
 
 ## Rules Added After Interception Scope Clarification
 
-**Never claim the wrapped client is a drop-in replacement.** It is not. It proxies
-the common paths and raises on `with_options()`. README and docs must reflect this
-accurately. See D-025 and D-026.
+**Never claim the wrapped client is a drop-in replacement.** It is not.
+It proxies the common call paths. Client-returning SDK methods are
+wrapped explicitly and return new guarded clients. See D-025 and D-026.
 
 **All client-returning SDK methods must be explicit `*args, **kwargs` methods, never `__getattr__` delegation.** This applies to `with_options()`, `with_raw_response()`, and `with_streaming_response()` on both `GuardedAnthropic` and `GuardedOpenAI`. Each must return a new guarded wrapper bound to the same `Guard`. Before closing Phase 2, scan the installed SDK source for any additional client-returning methods and either wrap them or document them as known gaps. See D-027.
 

@@ -105,6 +105,7 @@ call(real_fn, kwargs, guard)          [interceptor/base.py]
     |-- _evaluate_thresholds(guard, keys, states, kwargs)
     |       |-- fire WARN callbacks
     |       |-- post WEBHOOK in background thread
+    |       |-- [if BLOCK] raise BudgetExceededError
     |       |-- [if DEGRADE] copy kwargs, swap model
     |
     v
@@ -171,7 +172,10 @@ tokencap/
     │   ├── test_providers.py
     │   └── test_interceptor.py
     ├── integration/
+    │   ├── __init__.py
     │   └── test_full_pipeline.py  # HTTP layer mocked with pytest-httpx, always runs
+    ├── live/
+    │   └── __init__.py
     └── conftest.py                # Shared fixtures: mock providers, mock backends
 ```
 
@@ -540,7 +544,7 @@ everything else as pass-through.
 `guard` as an explicit argument.
 
 ```python
-from tokencap.core.types import BudgetKey, TokenUsage
+from tokencap.core.types import BudgetKey, BudgetState, CheckResult, TokenUsage
 from tokencap.core.exceptions import BudgetExceededError
 from tokencap.core.guard import Guard
 from typing import Any, Callable
@@ -560,12 +564,20 @@ def _build_keys(guard: Guard) -> list[BudgetKey]:
 def _evaluate_thresholds(
     guard: Guard,
     keys: list[BudgetKey],
-    states: dict[str, Any],
+    states: dict[str, BudgetState],
     kwargs: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Evaluate all thresholds against current states. Fire WARN callbacks
-    and WEBHOOK posts for newly-crossed thresholds. Apply DEGRADE if needed.
+    Evaluate all thresholds against current states.
+
+    - BLOCK thresholds are exempt from the fire-once rule. Every call
+      that crosses a BLOCK threshold is blocked. WARN and WEBHOOK actions
+      on the same threshold fire before the exception is raised. DEGRADE
+      is skipped when BLOCK is present.
+    - Non-BLOCK thresholds follow the fire-once rule: they fire once per
+      budget period, then are recorded as fired and skipped on subsequent
+      calls.
+
     Returns a copy of kwargs with model swapped if DEGRADE fired,
     or the original kwargs dict unchanged if no DEGRADE.
     Never mutates the caller's kwargs.
@@ -577,11 +589,17 @@ def _evaluate_thresholds(
         for threshold in policy.thresholds:
             if state.pct_used < threshold.at_pct:
                 continue
+
+            has_block = any(a.kind == "BLOCK" for a in threshold.actions)
             key = BudgetKey(dimension=dim, identifier=guard.identifiers[dim])
-            if guard.backend.is_threshold_fired(key, threshold.at_pct):
-                continue
-            # Threshold newly crossed, fire actions in order
-            guard.backend.mark_threshold_fired(key, threshold.at_pct)
+
+            if not has_block:
+                # Fire-once rule: skip if already fired this period
+                if guard.backend.is_threshold_fired(key, threshold.at_pct):
+                    continue
+                guard.backend.mark_threshold_fired(key, threshold.at_pct)
+
+            # Execute WARN and WEBHOOK actions
             for action in threshold.actions:
                 if action.kind == "WARN" and action.callback:
                     try:
@@ -590,11 +608,23 @@ def _evaluate_thresholds(
                         pass  # WARN callback failure never propagates
                 elif action.kind == "WEBHOOK" and action.webhook_url:
                     _fire_webhook(action.webhook_url, guard.get_status())
-                elif action.kind == "DEGRADE" and action.degrade_to:
+
+            if has_block:
+                # BLOCK: raise after WARN/WEBHOOK have fired.
+                # DEGRADE is skipped when BLOCK is present.
+                check_result = CheckResult(
+                    allowed=False,
+                    states=states,
+                    violated=[dim],
+                )
+                raise BudgetExceededError(check_result)
+
+            # DEGRADE (only when no BLOCK on this threshold)
+            for action in threshold.actions:
+                if action.kind == "DEGRADE" and action.degrade_to:
                     call_kwargs = dict(kwargs)  # copy on first DEGRADE
                     call_kwargs["model"] = action.degrade_to
                     guard.current_model = action.degrade_to
-                # BLOCK is handled before threshold evaluation (see call())
 
     return call_kwargs
 
