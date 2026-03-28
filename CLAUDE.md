@@ -85,13 +85,13 @@ protocol interface. If you need a new storage operation, add it to the protocol
 first and update ARCHITECTURE.md before implementing it.
 
 **The Provider Protocol is the only interface between interceptors and providers.**
-InterceptorBase never imports anthropic or openai directly. All provider-specific
-logic lives in the provider implementations.
+The functions in `interceptor/base.py` never import `anthropic` or `openai` directly.
+All provider-specific logic lives in the provider implementations.
 
 **wrap() must handle both sync and async clients.** Client type detection happens
 once at Guard construction via isinstance. Do not detect on every call. Use
-`InterceptorBase.call()` for sync clients and `InterceptorBase.call_async()` for
-async clients. Never require the developer to call different wrap functions. See D-024.
+`call()` for sync clients and `call_async()` for async clients. Never require
+the developer to call different wrap functions. See D-024.
 
 **core/types.py has no imports from other tokencap modules.**
 It is the foundation. Everything depends on it. If types.py imports from anywhere
@@ -186,3 +186,48 @@ auto UUID identifier. The two must be interchangeable in tests.
 **`quiet=True` suppresses stdout only.** It never suppresses OTEL emission,
 logging, or any other output channel. The startup message and only the startup
 message is affected by `quiet`.
+
+---
+
+## Rules Added After Interception Scope Clarification
+
+**Never claim the wrapped client is a drop-in replacement.** It is not. It proxies
+the common paths and raises on `with_options()`. README and docs must reflect this
+accurately. See D-025 and D-026.
+
+**All client-returning SDK methods must be explicit `*args, **kwargs` methods, never `__getattr__` delegation.** This applies to `with_options()`, `with_raw_response()`, and `with_streaming_response()` on both `GuardedAnthropic` and `GuardedOpenAI`. Each must return a new guarded wrapper bound to the same `Guard`. Before closing Phase 2, scan the installed SDK source for any additional client-returning methods and either wrap them or document them as known gaps. See D-027.
+
+**Document interception scope in code comments.** Every method on GuardedMessages
+and GuardedOpenAI that passes through untracked must have a comment saying so.
+Do not leave undocumented pass-throughs.
+
+---
+
+## Rules Added After Interceptor Depth Review
+
+**interceptor/base.py contains functions, not a class.** There is no InterceptorBase
+to instantiate. The functions are `call()`, `call_async()`, `call_stream()`. All
+take `guard` as an explicit argument. See D-028.
+
+**GuardedMessages and GuardedCompletions must have their own `__getattr__`.**
+Pass-through on the resource proxy is not automatic. Without it, `client.messages.batch`
+and any other sub-resource attribute raises AttributeError instead of delegating.
+
+**OpenAI streaming must inject `stream_options={"include_usage": True}` before
+calling `call_stream()`.** Do this with `setdefault` on a copy of kwargs. Never
+mutate the caller's dict. Never skip this. Without it, reconciliation never fires
+for OpenAI streaming calls. See D-030.
+
+**`GuardedStream.__exit__` must handle early exit with a WARNING, not an error.**
+If `extract_usage()` returns zero or raises, log a WARNING and treat the pre-call
+estimate as the final count. Never raise from `__exit__`. See D-029.
+
+**Backend must implement `is_threshold_fired()` and `mark_threshold_fired()`.**
+These are part of the Backend Protocol, not optional. The SQLite schema must
+include the `fired_thresholds` table. The Redis backend must implement the
+corresponding key operations. `reset()` must clear fired records. See D-031.
+
+**The `@property` pattern is mandatory for resource interception.** `messages` on
+GuardedAnthropic and `chat` on GuardedOpenAI must be `@property`, not handled by
+`__getattr__`. If they were handled by `__getattr__`, the real SDK object would be
+returned and no interception would occur.
