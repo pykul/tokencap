@@ -1,6 +1,6 @@
 # tokencap
 
-[![CI](https://github.com/YOUR_REPO/tokencap/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_REPO/tokencap/actions/workflows/ci.yml)
+[![CI](https://github.com/pykul/tokencap/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pykul/tokencap/actions/workflows/ci.yml)
 
 **Token usage visibility and budget enforcement for AI agents. Works out of the box. Scales to Redis when you need it.**
 
