@@ -37,11 +37,6 @@ response = client.messages.create(
     max_tokens=1024,
     messages=[{"role": "user", "content": "Summarize this document."}],
 )
-
-status = tokencap.get_status()
-for dim, state in status.dimensions.items():
-    print(f"{dim}: {state.used:,} / {state.limit:,} tokens ({state.pct_used:.1%})")
-# session: 312 / 9,223,372,036,854,775,807 tokens (0.0%)
 ```
 
 `wrap()` prints a startup message to stdout so there are no surprises. By default,
