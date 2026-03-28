@@ -39,6 +39,18 @@ packages = ["tokencap"]
 [tool.mypy]
 strict = true
 python_version = "3.9"
+warn_unused_ignores = false
+
+[[tool.mypy.overrides]]
+module = [
+    "anthropic",
+    "anthropic.*",
+    "openai",
+    "openai.*",
+    "tiktoken",
+    "tiktoken.*",
+]
+ignore_missing_imports = true
 
 [tool.ruff]
 target-version = "py39"

@@ -60,6 +60,11 @@ you have exhausted all alternatives and document why in a comment.
 **All files must pass ruff with the project config.** Run `make lint` before
 reporting completion of any task. Fix all warnings.
 
+**Always run `make lint` and `make test` immediately before every `git commit`.**
+Never commit without a passing lint and test run in the same session. If either
+fails, fix the issue before committing. This is not optional — CI will reject
+the push and the commit must be amended or followed by a fix commit.
+
 **Every public function and class must have a docstring.** Single-line is fine
 for obvious cases. No docstring-free public API.
 
