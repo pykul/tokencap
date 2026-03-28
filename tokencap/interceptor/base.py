@@ -13,7 +13,7 @@ import threading
 import urllib.request
 from typing import Any, Callable
 
-from tokencap.core.exceptions import BudgetExceededError
+from tokencap.core.exceptions import BackendError, BudgetExceededError
 from tokencap.core.guard import Guard
 from tokencap.core.types import BudgetKey, BudgetState, CheckResult, TokenUsage
 
@@ -102,7 +102,8 @@ def _fire_webhook(url: str, status: Any) -> None:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            urllib.request.urlopen(req, timeout=5)  # noqa: S310
+            with urllib.request.urlopen(req, timeout=5):  # noqa: S310
+                pass
         except Exception:
             logging.getLogger("tokencap").warning(
                 "Webhook POST to %s failed", url, exc_info=True
@@ -131,7 +132,12 @@ def call(
     estimated = provider.estimate_tokens(kwargs)
     keys = _build_keys(guard)
 
-    result = guard.backend.check_and_increment(keys, estimated)
+    try:
+        result = guard.backend.check_and_increment(keys, estimated)
+    except BudgetExceededError:
+        raise
+    except Exception as err:
+        raise BackendError(f"check_and_increment failed: {err}") from err
     if not result.allowed:
         raise BudgetExceededError(result)
 
@@ -143,7 +149,10 @@ def call(
     actual = provider.extract_usage(response)
     delta = actual.total - estimated
     if delta > 0:
-        final_states = guard.backend.force_increment(keys, delta)
+        try:
+            final_states = guard.backend.force_increment(keys, delta)
+        except Exception as err:
+            raise BackendError(f"force_increment failed: {err}") from err
     else:
         final_states = result.states
 
@@ -168,7 +177,12 @@ async def call_async(
     estimated = provider.estimate_tokens(kwargs)
     keys = _build_keys(guard)
 
-    result = guard.backend.check_and_increment(keys, estimated)
+    try:
+        result = guard.backend.check_and_increment(keys, estimated)
+    except BudgetExceededError:
+        raise
+    except Exception as err:
+        raise BackendError(f"check_and_increment failed: {err}") from err
     if not result.allowed:
         raise BudgetExceededError(result)
 
@@ -180,7 +194,10 @@ async def call_async(
     actual = provider.extract_usage(response)
     delta = actual.total - estimated
     if delta > 0:
-        final_states = guard.backend.force_increment(keys, delta)
+        try:
+            final_states = guard.backend.force_increment(keys, delta)
+        except Exception as err:
+            raise BackendError(f"force_increment failed: {err}") from err
     else:
         final_states = result.states
 
@@ -209,7 +226,12 @@ def call_stream(
     estimated = provider.estimate_tokens(kwargs)
     keys = _build_keys(guard)
 
-    result = guard.backend.check_and_increment(keys, estimated)
+    try:
+        result = guard.backend.check_and_increment(keys, estimated)
+    except BudgetExceededError:
+        raise
+    except Exception as err:
+        raise BackendError(f"check_and_increment failed: {err}") from err
     if not result.allowed:
         raise BudgetExceededError(result)
 

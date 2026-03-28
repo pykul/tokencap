@@ -702,6 +702,12 @@ async def call_async(
     """
     Async call path. Identical logic to call() with await where needed.
     Used by GuardedMessages.create() on AsyncAnthropic clients.
+
+    Note: check_and_increment() and force_increment() are synchronous
+    blocking calls. In high-throughput asyncio agents, these serialize
+    through the backend lock. For async agents with strict throughput
+    requirements, use RedisBackend. Full asyncio.to_thread() wrapping
+    is planned for v0.2.
     """
     estimated = provider.estimate_tokens(kwargs)
     keys = _build_keys(guard)
@@ -1168,7 +1174,7 @@ class DimensionPolicy:
     """Budget configuration for a single named dimension."""
     limit: int                                        # tokens
     thresholds: list[Threshold] = field(default_factory=list)
-    reset_every: Literal["day", "hour"] | None = None
+    reset_every: Literal["day", "hour"] | None = None  # v0.2: not yet implemented
 
     def __post_init__(self) -> None:
         # Ensure thresholds are always evaluated in ascending order
@@ -1416,8 +1422,23 @@ Stdout output can be suppressed with `quiet=True` on `wrap()` or `init()`.
 | `BudgetExceededError` | Raised on BLOCK, carries full `CheckResult` |
 | `BackendError` | Raised on unrecoverable storage failures |
 | `StatusResponse` | Returned by `get_status()`. Carries per-dimension `BudgetState`, active policy name, and next unfired threshold. |
+| `patch(limit=None, policy=None, quiet=False)` | Monkey-patch SDK constructors for framework integration. See D-050. |
+| `unpatch()` | Reverse all monkey-patches applied by `patch()` |
 
 All other symbols are internal and may change without notice.
+
+### Patch mode (patch())
+
+`tokencap.patch()` monkey-patches SDK constructors so that all newly
+constructed clients are automatically wrapped. Use it when you do not control
+client construction — e.g., agent frameworks like LangChain, CrewAI, LlamaIndex,
+or AutoGen that construct SDK clients internally.
+
+`patch()` accepts the same `limit=` and `policy=` parameters as `wrap()`.
+`unpatch()` fully reverses all changes and calls `teardown()`.
+
+Known limitation: only clients constructed after `patch()` is called are
+affected. Existing client instances are not wrapped.
 
 ---
 

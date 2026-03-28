@@ -45,7 +45,11 @@ class Threshold:
 
 @dataclass
 class DimensionPolicy:
-    """Budget configuration for a single named dimension."""
+    """Budget configuration for a single named dimension.
+
+    reset_every is defined but not yet implemented. Periodic resets are
+    planned for v0.2. Until then, call reset() manually on the backend.
+    """
 
     limit: int
     thresholds: list[Threshold] = field(default_factory=list)

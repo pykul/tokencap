@@ -89,6 +89,18 @@ class TestCall:
         call(real_fn, original, stub_guard, mock_provider)
         assert original == original_copy
 
+    def test_call_backend_error_wrapped(
+        self, stub_guard: Guard, mock_backend: MagicMock, mock_provider: MagicMock
+    ) -> None:
+        """Backend RuntimeError is wrapped as BackendError."""
+        from tokencap.core.exceptions import BackendError
+
+        mock_backend.check_and_increment.side_effect = RuntimeError("disk full")
+        real_fn = MagicMock()
+        with pytest.raises(BackendError, match="check_and_increment failed"):
+            call(real_fn, {"model": "test"}, stub_guard, mock_provider)
+        real_fn.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # _evaluate_thresholds() tests

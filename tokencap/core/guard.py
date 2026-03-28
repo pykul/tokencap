@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import sys
 import uuid
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from tokencap.status.api import StatusResponse
@@ -22,7 +21,14 @@ from tokencap.core.policy import Policy
 from tokencap.core.types import BudgetKey
 
 
-@dataclass
+class Telemetry(Protocol):
+    """Protocol for telemetry emitters (real OTEL or no-op)."""
+
+    def emit(self, **kwargs: Any) -> None:
+        """Emit telemetry data. Never raises."""
+        ...
+
+
 class _NoopTelemetry:
     """No-op telemetry stub. Silently discards all emit calls."""
 
@@ -66,7 +72,7 @@ class Guard:
                 from tokencap.telemetry.otel import OTEL_AVAILABLE, OtelEmitter
 
                 if OTEL_AVAILABLE:
-                    self.telemetry: _NoopTelemetry | Any = OtelEmitter()
+                    self.telemetry: Telemetry = OtelEmitter()
                 else:
                     self.telemetry = _NoopTelemetry()
             except Exception:
@@ -155,6 +161,4 @@ class Guard:
 
     def teardown(self) -> None:
         """Close backend connections and reset internal state."""
-        close_fn = getattr(self.backend, "close", None)
-        if close_fn is not None:
-            close_fn()
+        self.backend.close()

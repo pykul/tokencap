@@ -52,7 +52,7 @@ module = [
     "tokencap.backends.redis",
     "tokencap.telemetry.otel",
 ]
-disable_error_code = ["import-not-found"]
+disable_error_code = ["import-not-found", "attr-defined"]
 
 [tool.ruff]
 target-version = "py39"
