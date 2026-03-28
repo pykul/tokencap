@@ -159,3 +159,64 @@ class TestGuardTeardown:
         guard = Guard(policy=policy, backend=mock_backend, quiet=True)
         guard.teardown()
         mock_backend.close.assert_called_once()
+
+
+class TestWrapLimitEquivalence:
+    """Verify wrap(limit=N) and init(policy=...)+wrap() produce identical state."""
+
+    def test_wrap_limit_identical_to_init_wrap(
+        self, httpx_mock: object  # type: ignore[type-arg]
+    ) -> None:
+        """wrap(client, limit=N) produces same Guard state as init(policy)+wrap()."""
+        import anthropic
+
+        import tokencap
+
+        # Path 1: wrap(client, limit=N)
+        tokencap.wrap(
+            anthropic.Anthropic(api_key="sk-fake"), limit=50_000, quiet=True
+        )
+        guard_a = tokencap._guard
+        assert guard_a is not None
+        policy_a = guard_a.policy
+        ident_a = guard_a.identifiers
+        tokencap.teardown()
+
+        # Path 2: init(policy=...) + wrap(client)
+        tokencap.init(
+            policy=tokencap.Policy(
+                dimensions={
+                    "session": tokencap.DimensionPolicy(
+                        limit=50_000,
+                        thresholds=[
+                            tokencap.Threshold(
+                                at_pct=1.0,
+                                actions=[tokencap.Action(kind="BLOCK")],
+                            ),
+                        ],
+                    ),
+                }
+            ),
+            quiet=True,
+        )
+        tokencap.wrap(anthropic.Anthropic(api_key="sk-fake"))
+        guard_b = tokencap._guard
+        assert guard_b is not None
+        policy_b = guard_b.policy
+        ident_b = guard_b.identifiers
+        tokencap.teardown()
+
+        # Compare structure
+        assert set(policy_a.dimensions.keys()) == set(policy_b.dimensions.keys())
+        for dim in policy_a.dimensions:
+            dp_a = policy_a.dimensions[dim]
+            dp_b = policy_b.dimensions[dim]
+            assert dp_a.limit == dp_b.limit
+            assert len(dp_a.thresholds) == len(dp_b.thresholds)
+            for t_a, t_b in zip(dp_a.thresholds, dp_b.thresholds):
+                assert t_a.at_pct == t_b.at_pct
+                assert [a.kind for a in t_a.actions] == [a.kind for a in t_b.actions]
+        assert set(ident_a.keys()) == set(ident_b.keys())
+        # UUIDs differ but both have "session" dimension
+        assert "session" in ident_a
+        assert "session" in ident_b

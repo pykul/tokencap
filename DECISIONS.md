@@ -741,3 +741,18 @@ different SDK clients. It is not needed for the typical single-client case.
 `limit` and `policy` are mutually exclusive because `limit` is syntactic sugar
 for a specific policy (session dimension, BLOCK at 100%). Allowing both would
 create ambiguity about which takes precedence.
+
+---
+
+## D-044: next_threshold excludes BLOCK thresholds
+
+**Decision:** The `next_threshold` field in `StatusResponse` excludes
+BLOCK thresholds from consideration. Only WARN, WEBHOOK, and DEGRADE
+thresholds are candidates for "next unfired threshold."
+
+**Why:** BLOCK thresholds are exempt from the fire-once rule (D-037).
+They fire on every call once crossed, not just the first. The concept
+of "next unfired" does not apply to them — a BLOCK threshold is never
+"fired and done." Including BLOCK in `next_threshold` would be
+misleading: the developer would see a BLOCK threshold as "upcoming"
+when it is actually already enforcing on every call.

@@ -1291,8 +1291,11 @@ applies without Redis.
 
 ## Public API (__init__.py)
 
-All public symbols are listed explicitly in `__all__`. No logic lives in
-`__init__.py`: imports and re-exports only.
+`__init__.py` contains the module-level drop-in API: `wrap()`, `init()`,
+`get_status()`, `teardown()`, and the thread-safe global Guard singleton.
+No business logic beyond what is required to implement these four functions.
+All other logic lives in `guard.py`, the interceptors, and the backends.
+All public symbols are listed explicitly in `__all__`.
 
 Three usage tiers. All use `wrap()`. Each tier adds opt-in configuration.
 Defaults are always documented, never silent.
@@ -1416,6 +1419,7 @@ Stdout output can be suppressed with `quiet=True` on `wrap()` or `init()`.
 | `Action` | Policy action definition |
 | `BudgetExceededError` | Raised on BLOCK, carries full `CheckResult` |
 | `BackendError` | Raised on unrecoverable storage failures |
+| `StatusResponse` | Returned by `get_status()`. Carries per-dimension `BudgetState`, active policy name, and next unfired threshold. |
 
 All other symbols are internal and may change without notice.
 
@@ -1490,6 +1494,11 @@ class StatusResponse:
 `get_status()` is a synchronous read that calls `backend.get_states()` only. It
 never writes and never blocks on the call path. Safe to call inside agent loops
 or from multiple threads concurrently.
+
+`next_threshold` excludes BLOCK thresholds. A BLOCK threshold is not "upcoming"
+— it fires unconditionally on every call once crossed (D-037). `next_threshold`
+only considers WARN, WEBHOOK, and DEGRADE thresholds that follow the fire-once
+rule. See D-044.
 
 ---
 

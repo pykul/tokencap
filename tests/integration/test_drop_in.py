@@ -18,6 +18,10 @@ import pytest
 import tokencap
 from tests.conftest import (
     anthropic_response,
+    make_action,
+    make_dimension_policy,
+    make_policy,
+    make_threshold,
     openai_response,
 )
 from tokencap.core.exceptions import BudgetExceededError, ConfigurationError
@@ -77,8 +81,8 @@ class TestTier3:
         httpx_mock.add_response(  # type: ignore[union-attr]
             json=anthropic_response(input_tokens=25, output_tokens=10),
         )
-        policy = tokencap.Policy(dimensions={
-            "session": tokencap.DimensionPolicy(limit=100000),
+        policy = make_policy(dimensions={
+            "session": make_dimension_policy(limit=100000),
         })
         client = tokencap.wrap(
             anthropic.Anthropic(api_key="sk-fake"), policy=policy, quiet=True
@@ -92,8 +96,8 @@ class TestTier3:
 
     def test_limit_and_policy_raises(self) -> None:
         """Passing both limit and policy raises ConfigurationError."""
-        policy = tokencap.Policy(dimensions={
-            "session": tokencap.DimensionPolicy(limit=1000),
+        policy = make_policy(dimensions={
+            "session": make_dimension_policy(limit=1000),
         })
         with pytest.raises(ConfigurationError, match="limit or policy, not both"):
             tokencap.wrap(
@@ -112,20 +116,17 @@ class TestActions:
         httpx_mock.add_response(  # type: ignore[union-attr]
             json=anthropic_response(input_tokens=10, output_tokens=5),
         )
-        warned = []
+        warned: list[bool] = []
 
         def on_warn(status: object) -> None:
             warned.append(True)
 
-        # Set limit very low so the pre-call estimate crosses 50%
-        policy = tokencap.Policy(dimensions={
-            "session": tokencap.DimensionPolicy(
+        policy = make_policy(dimensions={
+            "session": make_dimension_policy(
                 limit=10,
-                thresholds=[
-                    tokencap.Threshold(at_pct=0.5, actions=[
-                        tokencap.Action(kind="WARN", callback=on_warn),
-                    ]),
-                ],
+                thresholds=[make_threshold(at_pct=0.5, actions=[
+                    make_action(kind="WARN", callback=on_warn),
+                ])],
             ),
         })
         client = tokencap.wrap(
@@ -141,11 +142,11 @@ class TestActions:
         self, httpx_mock: object  # type: ignore[type-arg]
     ) -> None:
         """BLOCK raises BudgetExceededError."""
-        policy = tokencap.Policy(dimensions={
-            "session": tokencap.DimensionPolicy(
+        policy = make_policy(dimensions={
+            "session": make_dimension_policy(
                 limit=1,
-                thresholds=[tokencap.Threshold(
-                    at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")],
+                thresholds=[make_threshold(
+                    at_pct=1.0, actions=[make_action(kind="BLOCK")],
                 )],
             ),
         })
@@ -165,14 +166,12 @@ class TestActions:
         httpx_mock.add_response(  # type: ignore[union-attr]
             json=anthropic_response(input_tokens=10, output_tokens=5),
         )
-        policy = tokencap.Policy(dimensions={
-            "session": tokencap.DimensionPolicy(
+        policy = make_policy(dimensions={
+            "session": make_dimension_policy(
                 limit=10,
-                thresholds=[tokencap.Threshold(
-                    at_pct=0.5, actions=[tokencap.Action(
-                        kind="DEGRADE", degrade_to="claude-haiku-4-5",
-                    )],
-                )],
+                thresholds=[make_threshold(at_pct=0.5, actions=[
+                    make_action(kind="DEGRADE", degrade_to="claude-haiku-4-5"),
+                ])],
             ),
         })
         client = tokencap.wrap(
@@ -182,8 +181,6 @@ class TestActions:
             model="claude-sonnet-4-6", max_tokens=100,
             messages=[{"role": "user", "content": "Hi"}],
         )
-        # The request was made — model may have been swapped in the call kwargs
-        # but the response comes from httpx_mock regardless
 
     def test_webhook_fires(
         self, httpx_mock: object  # type: ignore[type-arg]
@@ -192,20 +189,17 @@ class TestActions:
         httpx_mock.add_response(  # type: ignore[union-attr]
             json=anthropic_response(input_tokens=10, output_tokens=5),
         )
-        policy = tokencap.Policy(dimensions={
-            "session": tokencap.DimensionPolicy(
+        policy = make_policy(dimensions={
+            "session": make_dimension_policy(
                 limit=10,
-                thresholds=[tokencap.Threshold(
-                    at_pct=0.5, actions=[tokencap.Action(
-                        kind="WEBHOOK", webhook_url="http://example.com/hook",
-                    )],
-                )],
+                thresholds=[make_threshold(at_pct=0.5, actions=[
+                    make_action(kind="WEBHOOK", webhook_url="http://example.com/hook"),
+                ])],
             ),
         })
         client = tokencap.wrap(
             anthropic.Anthropic(api_key="sk-fake"), policy=policy, quiet=True
         )
-        # Should not raise — webhook fires in background
         client.messages.create(
             model="claude-sonnet-4-6", max_tokens=100,
             messages=[{"role": "user", "content": "Hi"}],
@@ -219,14 +213,14 @@ class TestMultiDimension:
         self, httpx_mock: object  # type: ignore[type-arg]
     ) -> None:
         """Two dimensions, one exceeded: BLOCK fires, both states in exception."""
-        policy = tokencap.Policy(dimensions={
-            "session": tokencap.DimensionPolicy(
+        policy = make_policy(dimensions={
+            "session": make_dimension_policy(
                 limit=1,
-                thresholds=[tokencap.Threshold(
-                    at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")],
+                thresholds=[make_threshold(
+                    at_pct=1.0, actions=[make_action(kind="BLOCK")],
                 )],
             ),
-            "tenant": tokencap.DimensionPolicy(limit=100000),
+            "tenant": make_dimension_policy(limit=100000),
         })
         client = tokencap.wrap(
             anthropic.Anthropic(api_key="sk-fake"), policy=policy, quiet=True
@@ -280,8 +274,8 @@ class TestInitThenWrap:
             json=anthropic_response(input_tokens=25, output_tokens=10, content="Hi"),
         )
         tokencap.init(
-            policy=tokencap.Policy(dimensions={
-                "session": tokencap.DimensionPolicy(limit=100000),
+            policy=make_policy(dimensions={
+                "session": make_dimension_policy(limit=100000),
             }),
             quiet=True,
         )
@@ -302,8 +296,8 @@ class TestInitThenWrap:
             json=openai_response(prompt_tokens=20, completion_tokens=5, content="Hi"),
         )
         tokencap.init(
-            policy=tokencap.Policy(dimensions={
-                "session": tokencap.DimensionPolicy(limit=100000),
+            policy=make_policy(dimensions={
+                "session": make_dimension_policy(limit=100000),
             }),
             quiet=True,
         )
@@ -327,14 +321,12 @@ class TestWebhookHTTPPost:
         httpx_mock.add_response(  # type: ignore[union-attr]
             json=anthropic_response(input_tokens=10, output_tokens=5),
         )
-        policy = tokencap.Policy(dimensions={
-            "session": tokencap.DimensionPolicy(
+        policy = make_policy(dimensions={
+            "session": make_dimension_policy(
                 limit=10,
-                thresholds=[tokencap.Threshold(
-                    at_pct=0.5, actions=[tokencap.Action(
-                        kind="WEBHOOK", webhook_url="http://test-hook.example.com/alert",
-                    )],
-                )],
+                thresholds=[make_threshold(at_pct=0.5, actions=[
+                    make_action(kind="WEBHOOK", webhook_url="http://test-hook.example.com/alert"),
+                ])],
             ),
         })
         with patch("tokencap.interceptor.base.urllib.request.urlopen") as mock_urlopen:
@@ -345,7 +337,6 @@ class TestWebhookHTTPPost:
                 model="claude-sonnet-4-6", max_tokens=100,
                 messages=[{"role": "user", "content": "Hi"}],
             )
-            # Wait for the background daemon thread to complete
             time.sleep(0.1)
             mock_urlopen.assert_called_once()
             req = mock_urlopen.call_args[0][0]
@@ -358,14 +349,12 @@ class TestWebhookHTTPPost:
         httpx_mock.add_response(  # type: ignore[union-attr]
             json=openai_response(prompt_tokens=10, completion_tokens=5),
         )
-        policy = tokencap.Policy(dimensions={
-            "session": tokencap.DimensionPolicy(
+        policy = make_policy(dimensions={
+            "session": make_dimension_policy(
                 limit=100,
-                thresholds=[tokencap.Threshold(
-                    at_pct=0.1, actions=[tokencap.Action(
-                        kind="WEBHOOK", webhook_url="http://test-hook.example.com/alert",
-                    )],
-                )],
+                thresholds=[make_threshold(at_pct=0.1, actions=[
+                    make_action(kind="WEBHOOK", webhook_url="http://test-hook.example.com/alert"),
+                ])],
             ),
         })
         with patch("tokencap.interceptor.base.urllib.request.urlopen") as mock_urlopen:

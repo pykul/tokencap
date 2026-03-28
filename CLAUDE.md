@@ -100,9 +100,10 @@ the developer to call different wrap functions. See D-024.
 It is the foundation. Everything depends on it. If types.py imports from anywhere
 else in tokencap, you have a circular dependency waiting to happen.
 
-**__init__.py contains only the public API surface.**
-No logic in __init__.py. It imports from internal modules and re-exports. Nothing
-else.
+**__init__.py contains the public API surface and the module-level API functions
+(wrap, init, get_status, teardown).** The global Guard singleton lives here.
+No business logic beyond these functions. All policy evaluation, interception,
+and storage logic lives in the appropriate modules.
 
 ---
 
