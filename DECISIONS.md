@@ -609,3 +609,91 @@ WEBHOOK actions on the same threshold (so the caller has observable
 context before the exception), then raises `BudgetExceededError`.
 DEGRADE is skipped when BLOCK is present on the same threshold because
 there is no call to degrade — the call is not made.
+
+---
+
+## D-038: policy.py and guard.py stub created in Phase 2
+
+**Decision:** `tokencap/core/policy.py` (Policy, DimensionPolicy, Threshold,
+Action) and a minimal `tokencap/core/guard.py` stub were created in Phase 2
+rather than waiting for Phase 3.
+
+**Why:** The interceptor module (`interceptor/base.py`) imports `Guard` and
+calls `guard.policy.dimensions`, `guard.backend.*`, and `guard.provider.*`.
+Without at least the policy dataclasses and a Guard stub, the interceptor
+code cannot be imported or tested. The policy dataclasses are pure data with
+no evaluation logic — pulling them forward adds no Phase 3 risk. The Guard
+stub implements only the attributes the interceptor needs (policy, backend,
+provider, identifiers, telemetry, get_status). Full Guard logic (wrap(),
+init(), startup message) remains Phase 3.
+
+---
+
+## D-039: is_async passed from GuardedAnthropic to GuardedMessages as constructor parameter
+
+**Decision:** `GuardedMessages.__init__` takes `is_async: bool` as a keyword
+argument. `GuardedAnthropic` passes `self._is_async` when constructing
+`GuardedMessages` in the `messages` property.
+
+**Why:** `GuardedMessages` needs to know whether to route `create()` to
+`call()` (sync) or `call_async()` (async). The async flag is determined at
+`GuardedAnthropic` construction time via `isinstance(client, AsyncAnthropic)`.
+`GuardedMessages` has no reference to `GuardedAnthropic`, so the flag must
+be passed explicitly. The same pattern applies to `GuardedCompletions` and
+`GuardedChat` on the OpenAI side.
+
+---
+
+## D-040: with_raw_response and with_streaming_response are properties, not methods
+
+**Decision:** On both `GuardedAnthropic` and `GuardedOpenAI`,
+`with_raw_response` and `with_streaming_response` are implemented as
+`@property` returning new guarded wrappers, not as callable methods with
+`*args, **kwargs`. `with_options` remains a callable method.
+
+**Why:** The Anthropic and OpenAI SDKs (as of anthropic 0.86 and openai 2.30)
+implement `with_raw_response` and `with_streaming_response` as
+`cached_property` on the client, not as callable methods. Calling them as
+functions raises `TypeError`. Only `with_options()` is a regular method.
+The implementation matches the actual SDK behaviour. ARCHITECTURE.md has been
+updated to reflect this.
+
+Post-call token reconciliation works for both raw and streaming response
+paths because both providers detect a callable `.parse()` method on the
+response object and call it before extracting usage fields. The raw response
+wrappers returned by both SDKs expose `.parse()` which returns the fully
+parsed response with usage data.
+
+**SDK scan results (Phase 2 closing requirement per D-027):**
+- Anthropic: `with_options` (function), `with_raw_response` (cached_property),
+  `with_streaming_response` (cached_property). All three wrapped.
+- OpenAI: same three. All three wrapped.
+- No additional `with_*` client-returning methods found on either SDK.
+
+---
+
+## D-041: Ruff SIM105 and SIM108 suppressed to match architecture spec
+
+**Decision:** `SIM105` and `SIM108` are added to `[tool.ruff.lint] ignore`
+in `pyproject.toml`.
+
+**Why:** SIM105 wants `contextlib.suppress(Exception)` instead of
+`try/except/pass`. SIM108 wants ternary operators instead of `if/else`
+blocks. Both patterns appear in `interceptor/base.py` where the code
+is a direct implementation of the code blocks in ARCHITECTURE.md.
+
+The `try/except/pass` in WARN callback handling is intentional per the
+architecture spec: "WARN callback failure never propagates." Rewriting
+it as `contextlib.suppress` changes the visual pattern without changing
+behaviour, but diverges from the documented spec code that reviewers
+compare against.
+
+The `if delta > 0` / `else` blocks in `call()` and `call_async()` are
+similarly written to match the spec line-for-line. Ternary operators
+would compress the logic into a single line, making it harder to
+diff against the architecture document.
+
+Both rules are suppressed globally rather than with per-line `noqa`
+comments because the patterns recur in every call path and the
+justification is the same in every case: keep implementation aligned
+with the documented spec.
