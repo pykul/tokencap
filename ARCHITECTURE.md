@@ -1484,6 +1484,13 @@ Acceptance criteria:
 - `force_increment` succeeds and increments even when limit is exceeded
 - `mypy --strict` passes on all Phase 1 files with zero errors
 - `pip install -e .` with no extras succeeds and `import tokencap` works
+- CI workflow present at `.github/workflows/ci.yml` and triggers on
+  pull_request to main and push to main only
+- CI matrix covers Python 3.9, 3.10, 3.11, 3.12, 3.13
+- `make lint` and `make test` both pass in CI on all matrix versions
+- All unit tests mock at the function/class level with no real I/O
+  beyond `tmp_path` and no real API calls
+- Test file naming mirrors the source tree 1:1
 
 ### Phase 2: Providers + Interceptor
 
@@ -1496,6 +1503,9 @@ Deliverables:
 - `tokencap/interceptor/openai.py`: `GuardedOpenAI`
 - `tests/unit/test_providers.py`
 - `tests/unit/test_interceptor.py`
+- Unit tests for all Phase 2 components
+- Integration tests for the full Anthropic and OpenAI call paths,
+  HTTP layer mocked with pytest-httpx
 
 Acceptance criteria:
 - Token estimation within 10% of actual for standard message payloads (fixtures,
@@ -1507,6 +1517,9 @@ Acceptance criteria:
 - DEGRADE swaps model in a copy of `request_kwargs`. Caller's dict is not mutated.
 - WEBHOOK fires in a background thread, does not block the call path
 - `mypy --strict` passes on all Phase 2 files
+- All unit and integration tests pass with `make test`
+- No real API calls and no credentials required for any test
+- `mypy --strict` passes on all new test files
 
 ### Phase 3: Policy Engine + Guard + Public API
 
@@ -1516,6 +1529,10 @@ Deliverables:
 - `tokencap/__init__.py`: full public API with explicit `__all__`
 - `tokencap/status/api.py`: `StatusResponse`, `ThresholdInfo`, `get_status()`
 - `tests/unit/test_policy.py`
+- Unit tests for all Phase 3 components
+- Integration tests covering the full drop-in API end-to-end,
+  all four action kinds, and multi-dimensional budgets,
+  HTTP layer mocked with pytest-httpx
 
 Acceptance criteria:
 - `tokencap.init()` + `tokencap.wrap()` + `client.messages.create()` works
@@ -1529,6 +1546,9 @@ Acceptance criteria:
 - Threshold does not re-fire in the same budget period (fire-once rule verified)
 - `get_status()` returns correct `BudgetState` for all configured dimensions
 - `mypy --strict` passes on all Phase 3 files
+- All unit and integration tests pass with `make test`
+- No real API calls and no credentials required for any test
+- `mypy --strict` passes on all new test files
 
 ### Phase 4: Redis Backend + OTEL
 
