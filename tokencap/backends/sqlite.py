@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from tokencap.core.types import BudgetKey, BudgetState, CheckResult
 
 
 def _now_iso() -> str:
     """Return current UTC time as ISO 8601 string."""
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _build_state(key: BudgetKey, limit: int, used: int) -> BudgetState:
