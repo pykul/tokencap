@@ -565,3 +565,19 @@ concurrently can corrupt the connection's internal state. The lock serialises
 access to the connection object within a single process. Both mechanisms are
 required: the lock for in-process thread safety, `BEGIN IMMEDIATE` for
 cross-process write serialisation.
+
+---
+
+## D-036: CI uses a single job, not a matrix of jobs
+
+**Decision:** The GitHub Actions CI workflow installs all five Python
+versions (3.9–3.13) in one job and loops through each to run
+`make test`. Lint runs once. The PR shows one green check, not five.
+
+**Why:** A matrix strategy creates a separate job per Python version,
+each producing its own check on the PR. Five checks add visual noise
+without proportionate value — if any version fails the single job fails,
+which is the same signal. A single job also starts faster because it
+avoids the overhead of provisioning five runners. The Makefile accepts
+`PYTHON=pythonX.Y` so each loop iteration runs tests under the correct
+interpreter.

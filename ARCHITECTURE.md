@@ -1486,8 +1486,8 @@ Acceptance criteria:
 - `pip install -e .` with no extras succeeds and `import tokencap` works
 - CI workflow present at `.github/workflows/ci.yml` and triggers on
   pull_request to main and push to main only
-- CI matrix covers Python 3.9, 3.10, 3.11, 3.12, 3.13
-- `make lint` and `make test` both pass in CI on all matrix versions
+- CI runs as a single job covering Python 3.9, 3.10, 3.11, 3.12, 3.13
+- `make lint` and `make test` both pass in CI on all Python versions
 - All unit tests mock at the function/class level with no real I/O
   beyond `tmp_path` and no real API calls
 - Test file naming mirrors the source tree 1:1
