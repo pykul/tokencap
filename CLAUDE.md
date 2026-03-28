@@ -53,7 +53,9 @@ delta increment is forced. It does not check limits or fire thresholds. See D-01
 
 ## Code Quality Rules
 
-**All files must pass `mypy --strict` with no errors.** If a type annotation requires an
+**All source files under `tokencap/` must pass `mypy --strict` with no errors.**
+Test files under `tests/` are excluded from `mypy --strict`. The `make lint`
+target runs `mypy --strict tokencap/` only. If a type annotation requires an
 ignore comment, fix the underlying issue. Do not add `# type: ignore` unless
 you have exhausted all alternatives and document why in a comment.
 

@@ -995,9 +995,12 @@ class GuardedCompletions:
         self,
         completions: openai.resources.chat.Completions,
         guard: Guard,
+        *,
+        is_async: bool,
     ) -> None:
         self._completions = completions
         self._guard = guard
+        self._is_async = is_async
 
     def create(self, **kwargs: Any) -> Any:
         # For streaming OpenAI calls, inject stream_options to get usage data.
@@ -1009,16 +1012,9 @@ class GuardedCompletions:
                 "stream_options", {"include_usage": True}
             )
             return call_stream(self._completions.create, kwargs, self._guard)
+        if self._is_async:
+            return call_async(self._completions.create, kwargs, self._guard)
         return call(self._completions.create, kwargs, self._guard)
-
-    async def create_async(self, **kwargs: Any) -> Any:
-        if kwargs.get("stream"):
-            kwargs = dict(kwargs)
-            kwargs.setdefault(
-                "stream_options", {"include_usage": True}
-            )
-            return call_stream(self._completions.create, kwargs, self._guard)
-        return await call_async(self._completions.create, kwargs, self._guard)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._completions, name)
@@ -1027,13 +1023,16 @@ class GuardedCompletions:
 class GuardedChat:
     """Proxy for openai.resources.Chat. Intercepts .completions."""
 
-    def __init__(self, chat: Any, guard: Guard) -> None:
+    def __init__(self, chat: Any, guard: Guard, *, is_async: bool) -> None:
         self._chat = chat
         self._guard = guard
+        self._is_async = is_async
 
     @property
     def completions(self) -> GuardedCompletions:
-        return GuardedCompletions(self._chat.completions, self._guard)
+        return GuardedCompletions(
+            self._chat.completions, self._guard, is_async=self._is_async
+        )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._chat, name)
@@ -1048,10 +1047,13 @@ class GuardedOpenAI:
     def __init__(self, client: openai.OpenAI, guard: Guard) -> None:
         self._client = client
         self._guard = guard
+        self._is_async = isinstance(client, openai.AsyncOpenAI)
 
     @property
     def chat(self) -> GuardedChat:
-        return GuardedChat(self._client.chat, self._guard)
+        return GuardedChat(
+            self._client.chat, self._guard, is_async=self._is_async
+        )
 
     def with_options(self, *args: Any, **kwargs: Any) -> "GuardedOpenAI":
         return GuardedOpenAI(
@@ -1533,6 +1535,7 @@ Deliverables:
 - `tokencap/interceptor/base.py`: module-level functions `call()`, `call_async()`, `call_stream()`, `GuardedStream`
 - `tokencap/interceptor/anthropic.py`: `GuardedAnthropic`
 - `tokencap/interceptor/openai.py`: `GuardedOpenAI`
+- `tokencap/status/api.py`: `StatusResponse` stub for `TYPE_CHECKING` import in `policy.py`
 - `tests/unit/test_providers.py`
 - `tests/unit/test_interceptor.py`
 - Unit tests for all Phase 2 components
@@ -1551,7 +1554,7 @@ Acceptance criteria:
 - `mypy --strict` passes on all Phase 2 files
 - All unit and integration tests pass with `make test`
 - No real API calls and no credentials required for any test
-- `mypy --strict` passes on all new test files
+- `mypy --strict` passes on all new source files under `tokencap/`
 
 ### Phase 3: Policy Engine + Guard + Public API
 
@@ -1580,7 +1583,7 @@ Acceptance criteria:
 - `mypy --strict` passes on all Phase 3 files
 - All unit and integration tests pass with `make test`
 - No real API calls and no credentials required for any test
-- `mypy --strict` passes on all new test files
+- `mypy --strict` passes on all new source files under `tokencap/`
 
 ### Phase 4: Redis Backend + OTEL
 

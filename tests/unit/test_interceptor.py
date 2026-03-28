@@ -10,6 +10,7 @@ import pytest
 from tests.conftest import make_action, make_dimension_policy, make_policy, make_threshold
 from tokencap.core.exceptions import BudgetExceededError
 from tokencap.core.guard import Guard
+from tokencap.core.policy import Policy
 from tokencap.core.types import BudgetKey, BudgetState, CheckResult, TokenUsage
 from tokencap.interceptor.base import (
     GuardedStream,
@@ -97,13 +98,13 @@ class TestEvaluateThresholds:
 
     def _make_guard(
         self,
-        policy: MagicMock | object,
+        policy: Policy,
         mock_backend: MagicMock,
         mock_provider: MagicMock,
     ) -> Guard:
         """Create a Guard with the given policy."""
         return Guard(
-            policy=policy,  # type: ignore[arg-type]
+            policy=policy,
             backend=mock_backend,
             provider=mock_provider,
             identifiers={"session": "test-id"},

@@ -627,6 +627,11 @@ stub implements only the attributes the interceptor needs (policy, backend,
 provider, identifiers, telemetry, get_status). Full Guard logic (wrap(),
 init(), startup message) remains Phase 3.
 
+`tokencap/status/api.py` was also created as a minimal stub containing only
+the `StatusResponse` dataclass. This satisfies the `TYPE_CHECKING` import in
+`policy.py` for `Callable[[StatusResponse], None]`. The full StatusResponse
+implementation with `ThresholdInfo` and `get_status()` logic is Phase 3.
+
 ---
 
 ## D-039: is_async passed from GuardedAnthropic to GuardedMessages as constructor parameter
