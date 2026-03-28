@@ -9,32 +9,22 @@ from __future__ import annotations
 
 import pytest
 
-from tests.conftest import (
+openai = pytest.importorskip("openai", reason="openai SDK not installed")
+
+from tests.conftest import (  # noqa: E402
     make_action,
     make_dimension_policy,
     make_policy,
     make_threshold,
     openai_response,
 )
-from tokencap.backends.sqlite import SQLiteBackend
-from tokencap.core.exceptions import BudgetExceededError
-from tokencap.core.guard import Guard
-from tokencap.core.types import BudgetKey
-from tokencap.interceptor.base import GuardedStream
-from tokencap.interceptor.openai import GuardedOpenAI
-from tokencap.providers.openai import OpenAIProvider
-
-try:
-    import openai
-
-    _HAS_OPENAI = True
-except ImportError:
-    _HAS_OPENAI = False
-
-pytestmark = pytest.mark.skipif(
-    not _HAS_OPENAI,
-    reason="openai SDK not installed",
-)
+from tokencap.backends.sqlite import SQLiteBackend  # noqa: E402
+from tokencap.core.exceptions import BudgetExceededError  # noqa: E402
+from tokencap.core.guard import Guard  # noqa: E402
+from tokencap.core.types import BudgetKey  # noqa: E402
+from tokencap.interceptor.base import GuardedStream  # noqa: E402
+from tokencap.interceptor.openai import GuardedOpenAI  # noqa: E402
+from tokencap.providers.openai import OpenAIProvider  # noqa: E402
 
 
 class TestOpenAIIntegration:

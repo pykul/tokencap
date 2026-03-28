@@ -9,31 +9,21 @@ from __future__ import annotations
 
 import pytest
 
-from tests.conftest import (
+anthropic = pytest.importorskip("anthropic", reason="anthropic SDK not installed")
+
+from tests.conftest import (  # noqa: E402
     anthropic_response,
     make_action,
     make_dimension_policy,
     make_policy,
     make_threshold,
 )
-from tokencap.backends.sqlite import SQLiteBackend
-from tokencap.core.exceptions import BudgetExceededError
-from tokencap.core.guard import Guard
-from tokencap.core.types import BudgetKey
-from tokencap.interceptor.anthropic import GuardedAnthropic
-from tokencap.providers.anthropic import AnthropicProvider
-
-try:
-    import anthropic
-
-    _HAS_ANTHROPIC = True
-except ImportError:
-    _HAS_ANTHROPIC = False
-
-pytestmark = pytest.mark.skipif(
-    not _HAS_ANTHROPIC,
-    reason="anthropic SDK not installed",
-)
+from tokencap.backends.sqlite import SQLiteBackend  # noqa: E402
+from tokencap.core.exceptions import BudgetExceededError  # noqa: E402
+from tokencap.core.guard import Guard  # noqa: E402
+from tokencap.core.types import BudgetKey  # noqa: E402
+from tokencap.interceptor.anthropic import GuardedAnthropic  # noqa: E402
+from tokencap.providers.anthropic import AnthropicProvider  # noqa: E402
 
 
 class TestAnthropicIntegration:
