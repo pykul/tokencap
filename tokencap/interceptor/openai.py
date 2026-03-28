@@ -87,7 +87,7 @@ class GuardedOpenAI:
     All client-returning methods are explicit *args/**kwargs methods. See D-027.
     """
 
-    def __init__(self, client: openai.OpenAI, guard: Guard) -> None:
+    def __init__(self, client: Any, guard: Guard) -> None:
         """Initialise with the real client and guard."""
         self._client = client
         self._guard = guard
@@ -110,14 +110,14 @@ class GuardedOpenAI:
     def with_raw_response(self) -> GuardedOpenAI:
         """Return a new GuardedOpenAI wrapping the raw-response client."""
         return GuardedOpenAI(
-            self._client.with_raw_response, self._guard  # type: ignore[arg-type]  # property returns wrapper, not OpenAI
+            self._client.with_raw_response, self._guard
         )
 
     @property
     def with_streaming_response(self) -> GuardedOpenAI:
         """Return a new GuardedOpenAI wrapping the streaming-response client."""
         return GuardedOpenAI(
-            self._client.with_streaming_response, self._guard  # type: ignore[arg-type]  # property returns wrapper, not OpenAI
+            self._client.with_streaming_response, self._guard
         )
 
     def __getattr__(self, name: str) -> Any:
