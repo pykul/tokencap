@@ -1,3 +1,5 @@
+<img src="assets/tokencap.svg" height="32">
+
 # tokencap
 
 **Token usage visibility and budget enforcement for AI agents. Works out of the box. Scales to Redis when you need it.**
