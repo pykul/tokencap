@@ -100,9 +100,10 @@ the developer to call different wrap functions. See D-024.
 It is the foundation. Everything depends on it. If types.py imports from anywhere
 else in tokencap, you have a circular dependency waiting to happen.
 
-**__init__.py contains only the public API surface.**
-No logic in __init__.py. It imports from internal modules and re-exports. Nothing
-else.
+**__init__.py contains the public API surface and the module-level API functions
+(wrap, init, get_status, teardown).** The global Guard singleton lives here.
+No business logic beyond these functions. All policy evaluation, interception,
+and storage logic lives in the appropriate modules.
 
 ---
 
@@ -182,9 +183,10 @@ is not optional code. It is part of the contract. See D-023.
 test that uses "run" as the default dimension name is wrong. See D-022.
 
 **`wrap(client, limit=N)` is syntactic sugar, not a separate code path.** It
-must produce exactly the same internal state as calling `init()` with a Policy
-containing a "session" DimensionPolicy with a BLOCK threshold at 100% and an
-auto UUID identifier. The two must be interchangeable in tests.
+must produce exactly the same internal state as a Policy containing a "session"
+DimensionPolicy with a BLOCK threshold at 100% and an auto UUID identifier.
+`wrap(client, policy=...)` accepts a full Policy directly. `limit` and `policy`
+are mutually exclusive — passing both raises `ConfigurationError`. See D-043.
 
 **`quiet=True` suppresses stdout only.** It never suppresses OTEL emission,
 logging, or any other output channel. The startup message and only the startup

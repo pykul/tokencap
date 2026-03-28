@@ -30,12 +30,14 @@ class GuardedCompletions:
         self,
         completions: Any,
         guard: Guard,
+        provider: Any,
         *,
         is_async: bool,
     ) -> None:
-        """Initialise with the real completions resource, guard, and async flag."""
+        """Initialise with the real completions resource, guard, provider, and async flag."""
         self._completions = completions
         self._guard = guard
+        self._provider = provider
         self._is_async = is_async
 
     def create(self, **kwargs: Any) -> Any:
@@ -49,10 +51,16 @@ class GuardedCompletions:
             kwargs.setdefault(
                 "stream_options", {"include_usage": True}
             )
-            return call_stream(self._completions.create, kwargs, self._guard)
+            return call_stream(
+                self._completions.create, kwargs, self._guard, self._provider
+            )
         if self._is_async:
-            return call_async(self._completions.create, kwargs, self._guard)
-        return call(self._completions.create, kwargs, self._guard)
+            return call_async(
+                self._completions.create, kwargs, self._guard, self._provider
+            )
+        return call(
+            self._completions.create, kwargs, self._guard, self._provider
+        )
 
     def __getattr__(self, name: str) -> Any:
         # All other completions attributes pass through untracked
@@ -62,17 +70,23 @@ class GuardedCompletions:
 class GuardedChat:
     """Proxy for openai.resources.Chat. Intercepts .completions."""
 
-    def __init__(self, chat: Any, guard: Guard, *, is_async: bool) -> None:
-        """Initialise with the real chat resource, guard, and async flag."""
+    def __init__(
+        self, chat: Any, guard: Guard, provider: Any, *, is_async: bool
+    ) -> None:
+        """Initialise with the real chat resource, guard, provider, and async flag."""
         self._chat = chat
         self._guard = guard
+        self._provider = provider
         self._is_async = is_async
 
     @property
     def completions(self) -> GuardedCompletions:
         """Intercept .completions access."""
         return GuardedCompletions(
-            self._chat.completions, self._guard, is_async=self._is_async
+            self._chat.completions,
+            self._guard,
+            self._provider,
+            is_async=self._is_async,
         )
 
     def __getattr__(self, name: str) -> Any:
@@ -87,37 +101,47 @@ class GuardedOpenAI:
     All client-returning methods are explicit *args/**kwargs methods. See D-027.
     """
 
-    def __init__(self, client: openai.OpenAI, guard: Guard) -> None:
-        """Initialise with the real client and guard."""
+    def __init__(self, client: openai.OpenAI, guard: Guard, provider: Any) -> None:
+        """Initialise with the real client, guard, and provider."""
         self._client = client
         self._guard = guard
+        self._provider = provider
         self._is_async = isinstance(client, openai.AsyncOpenAI)
 
     @property
     def chat(self) -> GuardedChat:
         """Intercept .chat access. Returns GuardedChat, not the real resource."""
         return GuardedChat(
-            self._client.chat, self._guard, is_async=self._is_async
+            self._client.chat,
+            self._guard,
+            self._provider,
+            is_async=self._is_async,
         )
 
     def with_options(self, *args: Any, **kwargs: Any) -> GuardedOpenAI:
         """Return a new GuardedOpenAI wrapping the client with updated options."""
         return GuardedOpenAI(
-            self._client.with_options(*args, **kwargs), self._guard
+            self._client.with_options(*args, **kwargs),
+            self._guard,
+            self._provider,
         )
 
     @property
     def with_raw_response(self) -> GuardedOpenAI:
         """Return a new GuardedOpenAI wrapping the raw-response client."""
         return GuardedOpenAI(
-            self._client.with_raw_response, self._guard  # type: ignore[arg-type]
+            self._client.with_raw_response,  # type: ignore[arg-type]
+            self._guard,
+            self._provider,
         )
 
     @property
     def with_streaming_response(self) -> GuardedOpenAI:
         """Return a new GuardedOpenAI wrapping the streaming-response client."""
         return GuardedOpenAI(
-            self._client.with_streaming_response, self._guard  # type: ignore[arg-type]
+            self._client.with_streaming_response,  # type: ignore[arg-type]
+            self._guard,
+            self._provider,
         )
 
     def __getattr__(self, name: str) -> Any:

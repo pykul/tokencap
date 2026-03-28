@@ -544,8 +544,10 @@ everything else as pass-through.
 ### base.py: intercept functions
 
 `base.py` contains module-level functions, not a class. There is no
-`InterceptorBase` instance. The state lives in `Guard`. All functions take
-`guard` as an explicit argument.
+`InterceptorBase` instance. Guard holds config (policy, backend, identifiers,
+telemetry). Provider is passed explicitly by the caller — it lives on the
+wrapped client, not on Guard. All functions take `guard` and `provider` as
+explicit arguments.
 
 ```python
 from tokencap.core.types import BudgetKey, BudgetState, CheckResult, TokenUsage
@@ -628,7 +630,6 @@ def _evaluate_thresholds(
                 if action.kind == "DEGRADE" and action.degrade_to:
                     call_kwargs = dict(kwargs)  # copy on first DEGRADE
                     call_kwargs["model"] = action.degrade_to
-                    guard.current_model = action.degrade_to
 
     return call_kwargs
 
@@ -657,6 +658,7 @@ def call(
     real_fn: Callable[..., Any],
     kwargs: dict[str, Any],
     guard: Guard,
+    provider: Any,
 ) -> Any:
     """
     Sync call path. Used by GuardedMessages.create() and
@@ -671,7 +673,7 @@ def call(
     7. Emit OTEL
     8. Return response
     """
-    estimated = guard.provider.estimate_tokens(kwargs)
+    estimated = provider.estimate_tokens(kwargs)
     keys = _build_keys(guard)
 
     result = guard.backend.check_and_increment(keys, estimated)
@@ -683,7 +685,7 @@ def call(
 
     response = real_fn(**call_kwargs)
 
-    actual = guard.provider.extract_usage(response)
+    actual = provider.extract_usage(response)
     delta = actual.total - estimated
     if delta > 0:
         final_states = guard.backend.force_increment(keys, delta)
@@ -705,12 +707,13 @@ async def call_async(
     real_fn: Callable[..., Any],
     kwargs: dict[str, Any],
     guard: Guard,
+    provider: Any,
 ) -> Any:
     """
     Async call path. Identical logic to call() with await where needed.
     Used by GuardedMessages.create() on AsyncAnthropic clients.
     """
-    estimated = guard.provider.estimate_tokens(kwargs)
+    estimated = provider.estimate_tokens(kwargs)
     keys = _build_keys(guard)
 
     result = guard.backend.check_and_increment(keys, estimated)
@@ -722,7 +725,7 @@ async def call_async(
 
     response = await real_fn(**call_kwargs)
 
-    actual = guard.provider.extract_usage(response)
+    actual = provider.extract_usage(response)
     delta = actual.total - estimated
     if delta > 0:
         final_states = guard.backend.force_increment(keys, delta)
@@ -744,6 +747,7 @@ def call_stream(
     real_fn: Callable[..., Any],
     kwargs: dict[str, Any],
     guard: Guard,
+    provider: Any,
 ) -> "GuardedStream":
     """
     Streaming call path. Returns a GuardedStream context manager.
@@ -767,6 +771,7 @@ def call_stream(
         keys=keys,
         original_model=original_model,
         guard=guard,
+        provider=provider,
     )
 
 
@@ -794,6 +799,7 @@ class GuardedStream:
         keys: list[BudgetKey],
         original_model: str,
         guard: Guard,
+        provider: Any,
     ) -> None:
         self._real_fn = real_fn
         self._call_kwargs = call_kwargs
@@ -801,6 +807,7 @@ class GuardedStream:
         self._keys = keys
         self._original_model = original_model
         self._guard = guard
+        self._provider = provider
         self._stream_ctx: Any = None
         self._usage: TokenUsage | None = None
 
@@ -818,7 +825,7 @@ class GuardedStream:
 
         # Extract usage from the completed stream if available
         try:
-            usage = self._guard.provider.extract_usage(self._stream_ctx)
+            usage = self._provider.extract_usage(self._stream_ctx)
         except Exception:
             usage = None
 
@@ -889,20 +896,22 @@ class GuardedMessages:
         self,
         messages: anthropic.resources.Messages,
         guard: Guard,
+        provider: Any,
         *,
         is_async: bool,
     ) -> None:
         self._messages = messages
         self._guard = guard
+        self._provider = provider
         self._is_async = is_async
 
     def create(self, **kwargs: Any) -> anthropic.types.Message:
         if self._is_async:
-            return call_async(self._messages.create, kwargs, self._guard)
-        return call(self._messages.create, kwargs, self._guard)
+            return call_async(self._messages.create, kwargs, self._guard, self._provider)
+        return call(self._messages.create, kwargs, self._guard, self._provider)
 
     def stream(self, **kwargs: Any) -> "GuardedStream":
-        return call_stream(self._messages.stream, kwargs, self._guard)
+        return call_stream(self._messages.stream, kwargs, self._guard, self._provider)
 
     def __getattr__(self, name: str) -> Any:
         # batch, count_tokens, and any other messages attributes pass through
@@ -927,9 +936,11 @@ class GuardedAnthropic:
         self,
         client: anthropic.Anthropic,
         guard: Guard,
+        provider: Any,
     ) -> None:
         self._client = client
         self._guard = guard
+        self._provider = provider
         self._is_async = isinstance(client, anthropic.AsyncAnthropic)
 
     @property
@@ -937,21 +948,22 @@ class GuardedAnthropic:
         return GuardedMessages(
             self._client.messages,
             self._guard,
+            self._provider,
             is_async=self._is_async,
         )
 
     def with_options(self, *args: Any, **kwargs: Any) -> "GuardedAnthropic":
         return GuardedAnthropic(
-            self._client.with_options(*args, **kwargs), self._guard
+            self._client.with_options(*args, **kwargs), self._guard, self._provider
         )
 
     @property
     def with_raw_response(self) -> "GuardedAnthropic":
-        return GuardedAnthropic(self._client.with_raw_response, self._guard)
+        return GuardedAnthropic(self._client.with_raw_response, self._guard, self._provider)
 
     @property
     def with_streaming_response(self) -> "GuardedAnthropic":
-        return GuardedAnthropic(self._client.with_streaming_response, self._guard)
+        return GuardedAnthropic(self._client.with_streaming_response, self._guard, self._provider)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
@@ -995,11 +1007,13 @@ class GuardedCompletions:
         self,
         completions: openai.resources.chat.Completions,
         guard: Guard,
+        provider: Any,
         *,
         is_async: bool,
     ) -> None:
         self._completions = completions
         self._guard = guard
+        self._provider = provider
         self._is_async = is_async
 
     def create(self, **kwargs: Any) -> Any:
@@ -1011,10 +1025,10 @@ class GuardedCompletions:
             kwargs.setdefault(
                 "stream_options", {"include_usage": True}
             )
-            return call_stream(self._completions.create, kwargs, self._guard)
+            return call_stream(self._completions.create, kwargs, self._guard, self._provider)
         if self._is_async:
-            return call_async(self._completions.create, kwargs, self._guard)
-        return call(self._completions.create, kwargs, self._guard)
+            return call_async(self._completions.create, kwargs, self._guard, self._provider)
+        return call(self._completions.create, kwargs, self._guard, self._provider)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._completions, name)
@@ -1023,15 +1037,16 @@ class GuardedCompletions:
 class GuardedChat:
     """Proxy for openai.resources.Chat. Intercepts .completions."""
 
-    def __init__(self, chat: Any, guard: Guard, *, is_async: bool) -> None:
+    def __init__(self, chat: Any, guard: Guard, provider: Any, *, is_async: bool) -> None:
         self._chat = chat
         self._guard = guard
+        self._provider = provider
         self._is_async = is_async
 
     @property
     def completions(self) -> GuardedCompletions:
         return GuardedCompletions(
-            self._chat.completions, self._guard, is_async=self._is_async
+            self._chat.completions, self._guard, self._provider, is_async=self._is_async
         )
 
     def __getattr__(self, name: str) -> Any:
@@ -1044,29 +1059,30 @@ class GuardedOpenAI:
     Same pattern as GuardedAnthropic. Intercepts .chat via @property.
     """
 
-    def __init__(self, client: openai.OpenAI, guard: Guard) -> None:
+    def __init__(self, client: openai.OpenAI, guard: Guard, provider: Any) -> None:
         self._client = client
         self._guard = guard
+        self._provider = provider
         self._is_async = isinstance(client, openai.AsyncOpenAI)
 
     @property
     def chat(self) -> GuardedChat:
         return GuardedChat(
-            self._client.chat, self._guard, is_async=self._is_async
+            self._client.chat, self._guard, self._provider, is_async=self._is_async
         )
 
     def with_options(self, *args: Any, **kwargs: Any) -> "GuardedOpenAI":
         return GuardedOpenAI(
-            self._client.with_options(*args, **kwargs), self._guard
+            self._client.with_options(*args, **kwargs), self._guard, self._provider
         )
 
     @property
     def with_raw_response(self) -> "GuardedOpenAI":
-        return GuardedOpenAI(self._client.with_raw_response, self._guard)
+        return GuardedOpenAI(self._client.with_raw_response, self._guard, self._provider)
 
     @property
     def with_streaming_response(self) -> "GuardedOpenAI":
-        return GuardedOpenAI(self._client.with_streaming_response, self._guard)
+        return GuardedOpenAI(self._client.with_streaming_response, self._guard, self._provider)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
@@ -1187,7 +1203,13 @@ has observable context before the exception is raised.
 
 ## The Guard (core/guard.py)
 
-Central orchestrator. Owns the backend, policy, provider registry, and OTEL emitter.
+Stateless config holder and factory. Owns the backend, policy, identifiers, and
+OTEL emitter. Does not hold provider or current_model — those are call-time state
+that lives on the wrapped client (GuardedAnthropic / GuardedOpenAI). Guard creates
+wrapped clients via wrap_anthropic() and wrap_openai(), which instantiate the
+appropriate provider and pass it to the wrapper. This allows a single Guard to wrap
+both Anthropic and OpenAI clients without cross-contamination.
+
 Instantiated once per application lifetime (or once globally via the drop-in API).
 
 ```python
@@ -1269,13 +1291,16 @@ applies without Redis.
 
 ## Public API (__init__.py)
 
-All public symbols are listed explicitly in `__all__`. No logic lives in
-`__init__.py`: imports and re-exports only.
+`__init__.py` contains the module-level drop-in API: `wrap()`, `init()`,
+`get_status()`, `teardown()`, and the thread-safe global Guard singleton.
+No business logic beyond what is required to implement these four functions.
+All other logic lives in `guard.py`, the interceptors, and the backends.
+All public symbols are listed explicitly in `__all__`.
 
-Three usage tiers. All are first-class. Each tier adds opt-in configuration.
+Three usage tiers. All use `wrap()`. Each tier adds opt-in configuration.
 Defaults are always documented, never silent.
 
-### Tier 1: zero config, tracking only
+### Tier 1: wrap(client) — tracking only
 
 ```python
 import tokencap
@@ -1286,8 +1311,7 @@ response = client.messages.create(...)
 print(tokencap.get_status())
 ```
 
-Calling `wrap()` without `init()` creates an implicit global Guard with these
-defaults applied transparently:
+`wrap()` creates an implicit global Guard with these defaults:
 
 - Dimension: `"session"` with an auto-generated UUID identifier
 - Backend: `SQLiteBackend("tokencap.db")` in the current working directory
@@ -1299,60 +1323,62 @@ On first call, tokencap prints to stdout:
 [tokencap] session started: session=<uuid> backend=sqlite:tokencap.db (no limit set)
 ```
 
-This makes the defaults visible. The developer always knows what tokencap is doing.
-
-### Tier 2: one argument, hard limit with automatic block
+### Tier 2: wrap(client, limit=N) — hard limit
 
 ```python
 client = tokencap.wrap(anthropic.Anthropic(), limit=50_000)
 ```
 
-Equivalent to configuring a `"session"` dimension with a BLOCK threshold at 100%.
+Equivalent to a `"session"` dimension with a BLOCK threshold at 100%.
 Auto UUID session identifier. Same SQLite default backend.
-
-tokencap prints to stdout on first call:
 
 ```
 [tokencap] session started: session=<uuid> backend=sqlite:tokencap.db limit=50000 tokens
 ```
 
-### Tier 3: full control
+### Tier 3: wrap(client, policy=...) — full policy control
 
 ```python
 import tokencap
 import anthropic
 
-tokencap.init(
-    policy=tokencap.Policy(
-        dimensions={
-            "session": tokencap.DimensionPolicy(
-                limit=50_000,
-                thresholds=[
-                    tokencap.Threshold(at_pct=0.8, actions=[tokencap.Action(kind="WARN")]),
-                    tokencap.Threshold(at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")]),
-                ],
-            ),
-            "tenant_daily": tokencap.DimensionPolicy(
-                limit=1_000_000,
-                thresholds=[
-                    tokencap.Threshold(at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")]),
-                ],
-            ),
-        }
-    ),
-    identifiers={
-        "session": "session_abc123",
-        "tenant_daily": "acme:2026-03-27",
-    },
+policy = tokencap.Policy(
+    dimensions={
+        "session": tokencap.DimensionPolicy(
+            limit=50_000,
+            thresholds=[
+                tokencap.Threshold(at_pct=0.8, actions=[tokencap.Action(kind="WARN")]),
+                tokencap.Threshold(at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")]),
+            ],
+        ),
+    }
 )
 
-client = tokencap.wrap(anthropic.Anthropic())
+client = tokencap.wrap(anthropic.Anthropic(), policy=policy)
 response = client.messages.create(...)
 print(tokencap.get_status())
 tokencap.teardown()
 ```
 
-### Explicit mode (for multiple guards in one process)
+`limit` and `policy` are mutually exclusive. Passing both raises
+`ConfigurationError`.
+
+### Advanced: init() for pre-configuration
+
+`init()` is optional. Use it when you need to configure the global Guard
+before the first `wrap()` call, or when sharing state across multiple
+`wrap()` calls with different clients.
+
+```python
+tokencap.init(
+    policy=my_policy,
+    identifiers={"session": "session_abc123", "tenant_daily": "acme:2026-03-27"},
+)
+anthropic_client = tokencap.wrap(anthropic.Anthropic())
+openai_client = tokencap.wrap(openai.OpenAI())
+```
+
+### Advanced: explicit Guard for multiple guards in one process
 
 ```python
 from tokencap import Guard, Policy, DimensionPolicy
@@ -1372,17 +1398,18 @@ client = guard.wrap_anthropic(anthropic.Anthropic())
 |---|---|---|---|---|
 | `wrap(client)` | `"session"` | auto UUID | none, tracking only | SQLite |
 | `wrap(client, limit=N)` | `"session"` | auto UUID | BLOCK at 100% | SQLite |
+| `wrap(client, policy=...)` | as configured | auto UUID per dim | as configured | SQLite |
 | `init(policy=...) + wrap(client)` | as configured | as configured | as configured | as configured |
 
 Defaults are printed to stdout on first call in all cases.
-Stdout output can be suppressed with `tokencap.init(quiet=True)`.
+Stdout output can be suppressed with `quiet=True` on `wrap()` or `init()`.
 
 **Public API surface (`__all__` in __init__.py):**
 
 | Symbol | Description |
 |---|---|
-| `wrap(client, limit=None)` | Wrap client, optional shorthand limit |
-| `init(policy, identifiers, backend, otel_enabled, quiet)` | Initialise global Guard |
+| `wrap(client, limit=None, policy=None, quiet=False)` | Wrap client, progressive config |
+| `init(policy, identifiers, backend, otel_enabled, quiet)` | Pre-configure global Guard (optional) |
 | `get_status()` | Returns `StatusResponse` from the global Guard |
 | `teardown()` | Tear down global Guard, close backend connections |
 | `Guard` | Explicit-mode entry point |
@@ -1392,6 +1419,7 @@ Stdout output can be suppressed with `tokencap.init(quiet=True)`.
 | `Action` | Policy action definition |
 | `BudgetExceededError` | Raised on BLOCK, carries full `CheckResult` |
 | `BackendError` | Raised on unrecoverable storage failures |
+| `StatusResponse` | Returned by `get_status()`. Carries per-dimension `BudgetState`, active policy name, and next unfired threshold. |
 
 All other symbols are internal and may change without notice.
 
@@ -1466,6 +1494,11 @@ class StatusResponse:
 `get_status()` is a synchronous read that calls `backend.get_states()` only. It
 never writes and never blocks on the call path. Safe to call inside agent loops
 or from multiple threads concurrently.
+
+`next_threshold` excludes BLOCK thresholds. A BLOCK threshold is not "upcoming"
+— it fires unconditionally on every call once crossed (D-037). `next_threshold`
+only considers WARN, WEBHOOK, and DEGRADE thresholds that follow the fire-once
+rule. See D-044.
 
 ---
 

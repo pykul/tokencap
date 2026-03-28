@@ -41,11 +41,11 @@ class TestAnthropicIntegration:
         })
         provider = AnthropicProvider()
         guard = Guard(
-            policy=policy, backend=backend, provider=provider,
-            identifiers={"session": "integration-test"},
+            policy=policy, identifiers={"session": "integration-test"},
+            backend=backend, quiet=True,
         )
         client = anthropic.Anthropic(api_key="sk-fake-key")
-        guarded = GuardedAnthropic(client, guard)
+        guarded = GuardedAnthropic(client, guard, provider)
 
         response = guarded.messages.create(
             model="claude-sonnet-4-6",
@@ -74,11 +74,11 @@ class TestAnthropicIntegration:
         })
         provider = AnthropicProvider()
         guard = Guard(
-            policy=policy, backend=backend, provider=provider,
-            identifiers={"session": "block-test"},
+            policy=policy, identifiers={"session": "block-test"},
+            backend=backend, quiet=True,
         )
         client = anthropic.Anthropic(api_key="sk-fake-key")
-        guarded = GuardedAnthropic(client, guard)
+        guarded = GuardedAnthropic(client, guard, provider)
 
         with pytest.raises(BudgetExceededError):
             guarded.messages.create(
@@ -101,11 +101,11 @@ class TestAnthropicIntegration:
         })
         provider = AnthropicProvider()
         guard = Guard(
-            policy=policy, backend=backend, provider=provider,
-            identifiers={"session": "reconcile-test"},
+            policy=policy, identifiers={"session": "reconcile-test"},
+            backend=backend, quiet=True,
         )
         client = anthropic.Anthropic(api_key="sk-fake-key")
-        guarded = GuardedAnthropic(client, guard)
+        guarded = GuardedAnthropic(client, guard, provider)
 
         guarded.messages.create(
             model="claude-sonnet-4-6",

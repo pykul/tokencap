@@ -702,3 +702,57 @@ Both rules are suppressed globally rather than with per-line `noqa`
 comments because the patterns recur in every call path and the
 justification is the same in every case: keep implementation aligned
 with the documented spec.
+
+---
+
+## D-042: Guard is a stateless config holder; provider lives on the wrapped client
+
+**Decision:** Guard holds policy, identifiers, backend, and telemetry. It does
+not hold `provider` or `current_model`. Provider is created per `wrap_*` call
+and passed to the wrapped client (GuardedAnthropic / GuardedOpenAI), which
+passes it through to GuardedMessages / GuardedCompletions and ultimately to
+`call()`, `call_async()`, and `call_stream()` as an explicit argument.
+
+**Why:** Provider and current_model are mutable call-time state. Storing them
+on Guard means a single Guard wrapping both an Anthropic and an OpenAI client
+would overwrite the provider on each `wrap_*` call, causing cross-contamination.
+By storing provider on the wrapped client, each wrapped client owns its own
+provider instance. `call()` receives provider explicitly from the caller,
+making the data flow visible and preventing any shared mutable state on Guard.
+
+---
+
+## D-043: wrap() accepts policy directly; limit and policy are mutually exclusive
+
+**Decision:** `wrap()` signature is `wrap(client, limit=None, policy=None,
+quiet=False)`. `policy` accepts a full `Policy` object. `limit` and `policy`
+are mutually exclusive — passing both raises `ConfigurationError`.
+
+**Why:** The primary product story is two lines: import and wrap. The previous
+design required `init()` + `wrap()` for full policy control, which is a
+two-step ceremony that obscures the simplicity of the product. By accepting
+`policy` directly on `wrap()`, the common case — a single client with a
+custom policy — stays at two lines.
+
+`init()` remains for advanced scenarios: pre-configuring identifiers, choosing
+a non-default backend, or sharing state across multiple `wrap()` calls with
+different SDK clients. It is not needed for the typical single-client case.
+
+`limit` and `policy` are mutually exclusive because `limit` is syntactic sugar
+for a specific policy (session dimension, BLOCK at 100%). Allowing both would
+create ambiguity about which takes precedence.
+
+---
+
+## D-044: next_threshold excludes BLOCK thresholds
+
+**Decision:** The `next_threshold` field in `StatusResponse` excludes
+BLOCK thresholds from consideration. Only WARN, WEBHOOK, and DEGRADE
+thresholds are candidates for "next unfired threshold."
+
+**Why:** BLOCK thresholds are exempt from the fire-once rule (D-037).
+They fire on every call once crossed, not just the first. The concept
+of "next unfired" does not apply to them — a BLOCK threshold is never
+"fired and done." Including BLOCK in `next_threshold` would be
+misleading: the developer would see a BLOCK threshold as "upcoming"
+when it is actually already enforcing on every call.

@@ -2,6 +2,7 @@
 
 Module-level functions, not a class. All state lives in Guard.
 All functions take guard as an explicit argument. See D-028.
+Provider is passed explicitly by the caller, not stored on Guard.
 """
 
 from __future__ import annotations
@@ -87,7 +88,6 @@ def _evaluate_thresholds(
                 if action.kind == "DEGRADE" and action.degrade_to:
                     call_kwargs = dict(kwargs)  # copy on first DEGRADE
                     call_kwargs["model"] = action.degrade_to
-                    guard.current_model = action.degrade_to
 
     return call_kwargs
 
@@ -115,6 +115,7 @@ def call(
     real_fn: Callable[..., Any],
     kwargs: dict[str, Any],
     guard: Guard,
+    provider: Any,
 ) -> Any:
     """Sync call path.
 
@@ -127,7 +128,7 @@ def call(
     7. Emit OTEL
     8. Return response
     """
-    estimated = guard.provider.estimate_tokens(kwargs)
+    estimated = provider.estimate_tokens(kwargs)
     keys = _build_keys(guard)
 
     result = guard.backend.check_and_increment(keys, estimated)
@@ -139,7 +140,7 @@ def call(
 
     response = real_fn(**call_kwargs)
 
-    actual = guard.provider.extract_usage(response)
+    actual = provider.extract_usage(response)
     delta = actual.total - estimated
     if delta > 0:
         final_states = guard.backend.force_increment(keys, delta)
@@ -161,9 +162,10 @@ async def call_async(
     real_fn: Callable[..., Any],
     kwargs: dict[str, Any],
     guard: Guard,
+    provider: Any,
 ) -> Any:
     """Async call path. Identical logic to call() with await where needed."""
-    estimated = guard.provider.estimate_tokens(kwargs)
+    estimated = provider.estimate_tokens(kwargs)
     keys = _build_keys(guard)
 
     result = guard.backend.check_and_increment(keys, estimated)
@@ -175,7 +177,7 @@ async def call_async(
 
     response = await real_fn(**call_kwargs)
 
-    actual = guard.provider.extract_usage(response)
+    actual = provider.extract_usage(response)
     delta = actual.total - estimated
     if delta > 0:
         final_states = guard.backend.force_increment(keys, delta)
@@ -197,13 +199,14 @@ def call_stream(
     real_fn: Callable[..., Any],
     kwargs: dict[str, Any],
     guard: Guard,
+    provider: Any,
 ) -> GuardedStream:
     """Streaming call path. Returns a GuardedStream context manager.
 
     The pre-call check runs immediately. Token usage is reconciled
     when the stream context manager exits.
     """
-    estimated = guard.provider.estimate_tokens(kwargs)
+    estimated = provider.estimate_tokens(kwargs)
     keys = _build_keys(guard)
 
     result = guard.backend.check_and_increment(keys, estimated)
@@ -220,6 +223,7 @@ def call_stream(
         keys=keys,
         original_model=original_model,
         guard=guard,
+        provider=provider,
     )
 
 
@@ -241,6 +245,7 @@ class GuardedStream:
         keys: list[BudgetKey],
         original_model: str,
         guard: Guard,
+        provider: Any,
     ) -> None:
         """Initialise the stream wrapper."""
         self._real_fn = real_fn
@@ -249,6 +254,7 @@ class GuardedStream:
         self._keys = keys
         self._original_model = original_model
         self._guard = guard
+        self._provider = provider
         self._stream_ctx: Any = None
 
     def __enter__(self) -> Any:
@@ -267,7 +273,7 @@ class GuardedStream:
 
         # Extract usage from the completed stream if available
         try:
-            usage: TokenUsage | None = self._guard.provider.extract_usage(
+            usage: TokenUsage | None = self._provider.extract_usage(
                 self._stream_ctx
             )
         except Exception:
