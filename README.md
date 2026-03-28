@@ -344,7 +344,7 @@ shared = RedisBackend("redis://redis-host:6379")
 ```
 
 ```bash
-pip install redis
+pip install tokencap[redis]
 ```
 
 ### Pre-configuring with init()
@@ -369,7 +369,6 @@ client = tokencap.wrap(anthropic.Anthropic())
 
 ```bash
 pip install -e ".[dev]"
-pip install redis opentelemetry-api
 make test          # unit + integration, no external services needed
 make redis-up      # start local Redis container
 make test-live     # live tests (mock providers, real Redis)
@@ -394,7 +393,7 @@ tokencap emits OpenTelemetry metrics after every call if `opentelemetry-api` is
 installed. No configuration required.
 
 ```bash
-pip install opentelemetry-api
+pip install tokencap[otel]
 ```
 
 | Metric | Type | Labels |
@@ -501,11 +500,13 @@ pip install tokencap
 
 Requires Python 3.9+.
 
-For provider-specific installs: `pip install tokencap[anthropic]`, `pip install tokencap[openai]`, or `pip install tokencap[all]`.
-
-For distributed mode: `pip install redis`
-
-For OTEL: `pip install opentelemetry-api`
+```bash
+pip install tokencap[anthropic]   # Anthropic SDK
+pip install tokencap[openai]      # OpenAI SDK + tiktoken
+pip install tokencap[redis]       # Redis backend
+pip install tokencap[otel]        # OpenTelemetry
+pip install tokencap[all]         # everything
+```
 
 ---
 
