@@ -216,6 +216,11 @@ tokencap uses token counts directly. You set a limit of 50,000 tokens. That limi
 means exactly the same thing regardless of which model you use, how the provider
 prices it, or whether tokens are cached.
 
+Dollar cost tracking is deliberately absent. Provider pricing changes without
+notice and no machine-readable pricing API exists. A dollar figure derived from
+a stale table is worse than no figure at all. Token counts are always accurate
+— they come directly from the provider response.
+
 If you know your task takes roughly 5,000 tokens per call and you want to cap at
 10 calls, you set a limit of 50,000. No conversion needed.
 

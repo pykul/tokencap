@@ -204,8 +204,13 @@ class BudgetState:
     used: int         # tokens consumed so far in this period
     remaining: int    # tokens left (may be negative after force_increment)
     pct_used: float   # used / limit: may exceed 1.0 after reconciliation
+```
 
+`cost_usd` is not included in `BudgetState`. Dollar cost calculation requires a
+pricing table that cannot be kept accurate without a machine-readable provider API.
+See D-045.
 
+```python
 @dataclass
 class CheckResult:
     """Outcome of a check_and_increment call."""
