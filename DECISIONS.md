@@ -133,12 +133,13 @@ best-effort notification, not guaranteed delivery.
 ## D-009: Zero required dependencies
 
 **Decision:** `pip install tokencap` installs nothing beyond the Python standard
-library. All provider SDKs, Redis, tiktoken, and OTEL are optional extras.
+library. Provider SDKs are optional extras. Redis and OTEL are installed directly
+by the developer if needed, not as tokencap extras.
 
 **Why:** Mandatory dependencies are adoption friction. A developer who already has
-`anthropic` installed should not be forced to also install `redis-py` and `tiktoken`
-just because other users need them. Optional extras (`tokencap[anthropic]`,
-`tokencap[redis]`, `tokencap[all]`) let each developer install exactly what they need.
+`anthropic` installed should not be forced to install other packages. Optional
+extras (`tokencap[anthropic]`, `tokencap[openai]`, `tokencap[all]`) cover provider
+SDKs only. Redis and OTEL are handled separately. See D-033 for the full rationale.
 The core library must import cleanly with zero extras.
 
 ---
@@ -367,7 +368,174 @@ function. This is friction with no benefit. The client type is detectable via
 `isinstance` at runtime. A single `wrap()` function that handles both keeps the
 API simple and consistent with the "two lines" philosophy.
 
-**Implementation note:** `InterceptorBase` has two call paths: `call()` for sync
+**Implementation note:** `interceptor/base.py` has two call paths: `call()` for sync
 and `call_async()` for async. The wrapper detects which path to use based on
 the client type passed to `Guard.__init__`. This detection happens once at
 construction time, not on every call.
+
+---
+
+## D-025: with_options() uses *args/**kwargs passthrough, returns GuardedAnthropic
+
+**Decision:** `with_options()` is implemented as an explicit method on `GuardedAnthropic`
+using `*args, **kwargs` passthrough. It calls the underlying client's `with_options()`
+and wraps the result in a new `GuardedAnthropic` bound to the same `Guard`.
+
+```python
+def with_options(self, *args: Any, **kwargs: Any) -> "GuardedAnthropic":
+    new_client = self._client.with_options(*args, **kwargs)
+    return GuardedAnthropic(new_client, self._guard)
+```
+
+**Why `*args, **kwargs` and not a typed signature:** Copying the SDK's parameter
+list would create a maintenance burden. Every time the Anthropic SDK changes
+`with_options()`, our copy would drift silently. `*args, **kwargs` passes everything
+through without owning the signature. If the SDK renames a parameter, the developer
+gets the SDK's own error, not a tokencap-specific one.
+
+**Why not `__getattr__` delegation:** `__getattr__` on `with_options` would return
+the SDK's real method, which returns a plain `anthropic.Anthropic`. Any calls made
+through that object would bypass tokencap silently. This is worse than a visible
+error. The explicit method ensures the result is always wrapped.
+
+---
+
+## D-026: tokencap intercepts messages.create() and messages.stream() only in v0
+
+**Decision:** In v0, tokencap intercepts `messages.create()` and `messages.stream()`
+on Anthropic, and `chat.completions.create()` on OpenAI. All other endpoints
+(batch, beta, models, files, etc.) pass through untracked.
+
+**Why:** The vast majority of agent token usage flows through these endpoints.
+Intercepting every possible endpoint would require maintaining wrappers for every
+SDK method and every SDK update. That is disproportionate maintenance for v0.
+The intercepted surface is documented honestly in the README so developers know
+what is and is not tracked. Expanding to batch and beta endpoints is v0.2.
+
+---
+
+## D-027: All client-returning SDK methods must be explicitly wrapped
+
+**Decision:** Any method on the Anthropic or OpenAI SDK that returns a new client
+instance must be implemented as an explicit method on the guarded wrapper using
+`*args, **kwargs` passthrough. It must return a new guarded wrapper bound to the
+same `Guard`. It must never be left to `__getattr__` delegation.
+
+Known methods in v0:
+
+**Anthropic:**
+- `with_options(*args, **kwargs)` -> `GuardedAnthropic`
+- `with_raw_response(*args, **kwargs)` -> `GuardedAnthropic`
+- `with_streaming_response(*args, **kwargs)` -> `GuardedAnthropic`
+
+**OpenAI:**
+- `with_options(*args, **kwargs)` -> `GuardedOpenAI`
+- `with_raw_response(*args, **kwargs)` -> `GuardedOpenAI`
+- `with_streaming_response(*args, **kwargs)` -> `GuardedOpenAI`
+
+**Why:** Any client-returning method left to `__getattr__` returns a plain SDK
+client. Every call made through that object bypasses tokencap silently. This is
+the same problem as the original `with_options()` gap. The fix is the same in
+all cases: an explicit method with `*args, **kwargs` passthrough.
+
+**Standing instruction for Phase 2:** Before closing Phase 2, Claude Code must
+scan the installed Anthropic and OpenAI SDK source for any method that returns
+a client instance and is not yet covered. Any new method found must either be
+wrapped or documented as a known gap with a justification.
+
+---
+
+## D-028: InterceptorBase is module-level functions, not a class
+
+**Decision:** `interceptor/base.py` contains `call()`, `call_async()`,
+`call_stream()`, and `_evaluate_thresholds()` as module-level functions.
+There is no `InterceptorBase` class to instantiate.
+
+**Why:** There is no instance state in the interceptor. All state lives in
+`Guard`. Forcing a class instantiation would either require passing `Guard` to
+`__init__` (coupling) or passing it to every method call (verbose). Functions
+with explicit `guard` arguments are cleaner, easier to test, and make the data
+flow obvious.
+
+---
+
+## D-029: Early stream exit falls back to pre-call estimate
+
+**Decision:** If a developer exits a stream before the final chunk arrives
+(via `break`, exception, or early return), tokencap uses the pre-call token
+estimate as the reconciled count. A WARNING is logged. The ledger is not
+corrected to the actual usage because the actual usage is unknown.
+
+**Why:** The pre-call estimate was already debited. Without the final chunk,
+actual usage cannot be determined. The options are: leave the ledger understated
+(accept the estimate as final), raise an error on exit (breaks developer code),
+or force a status call to the provider (not available). Accepting the estimate
+as final is the least surprising behavior. The warning tells the developer what
+happened.
+
+---
+
+## D-030: OpenAI streaming injects stream_options automatically
+
+**Decision:** When `stream=True` is detected in kwargs for an OpenAI call,
+`GuardedCompletions.create()` injects `stream_options={"include_usage": True}`
+into a copy of kwargs using `setdefault`. This happens before the call.
+
+**Why:** OpenAI does not return token usage in streaming by default. Without
+this injection, `extract_usage()` returns zero tokens for every streaming call,
+reconciliation never fires, and the ledger permanently understates usage. The
+developer should not have to know about this OpenAI quirk. `setdefault` ensures
+we do not override a developer-supplied `stream_options`.
+
+---
+
+## D-031: Backend stores threshold fired state
+
+**Decision:** The Backend Protocol has two new methods: `is_threshold_fired()`
+and `mark_threshold_fired()`. These store and query whether a given threshold
+has fired for a given key. `reset()` also clears fired threshold records.
+
+**Why:** The fire-once rule requires persistent state. If fired state were stored
+in memory on the Guard instance, it would not survive across Guard instances in
+distributed mode. Two agents targeting the same budget key would each fire the
+80% WARN alert separately. Storing in the backend means the fire-once rule is
+enforced across all agents sharing the same key.
+
+SQLite stores these in a `fired_thresholds` table. Redis stores them as string
+keys with a naming convention. Both are cleared on `reset()`.
+
+---
+
+## D-032: wrapt is not used
+
+**Decision:** tokencap does not use the `wrapt` library for its proxy classes.
+The proxy pattern is implemented with `@property` for resource interception and
+`__getattr__` for pass-through delegation.
+
+**Why:** `wrapt.ObjectProxy` solves problems with dunder methods that Python looks
+up on the type rather than the instance (`__repr__`, `__len__`, `__iter__`, etc.).
+These never trigger `__getattr__` on a hand-rolled proxy.
+
+For the Anthropic and OpenAI SDK clients, none of these dunders are relevant.
+The clients are not containers, not iterable, not comparable. The only one that
+matters is `__repr__` for debugging, which is a minor inconvenience, not a
+correctness problem. Adding `wrapt` as a dependency for the marginal benefit of
+a better `repr()` is not justified. If a real edge case surfaces post-launch,
+adding it in v0.2 is a one-line change.
+
+---
+
+## D-033: redis and opentelemetry-api are not tokencap extras
+
+**Decision:** `tokencap[redis]` and `tokencap[otel]` extras are not published
+or documented as the primary install path. The README directs users to install
+`redis` and `opentelemetry-api` directly. The extras table in pyproject.toml
+covers only `anthropic`, `openai`, and `all`.
+
+**Why:** Redis and OTEL are independent libraries with their own release cycles.
+Wrapping them as tokencap extras implies tokencap controls their versions, which
+it does not. Both are already handled gracefully by tokencap without being listed
+as extras: Redis raises a clear `ImportError` with the install command if
+`RedisBackend` is used without it. OTEL no-ops silently if not installed. The
+developer who wants either already knows how to install a Python package. Listing
+them as extras adds friction without providing any additional value.

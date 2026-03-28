@@ -33,7 +33,7 @@ the developer switches with a single constructor argument.
 - Wrap LLM provider clients (Anthropic, OpenAI) in-process. No proxy, no network change.
 - Provide real-time visibility into token usage across agents and dimensions
 - Estimate tokens before each call and reconcile actual usage after
-- Track usage against multiple simultaneous budget dimensions (per-run, per-tenant,
+- Track usage against multiple simultaneous budget dimensions (per-session, per-tenant,
   per-day, or any custom dimension the developer defines)
 - Execute policy actions at configurable thresholds: WARN, BLOCK, DEGRADE, WEBHOOK
 - Emit OTEL metrics after each call (no-ops silently if opentelemetry-api not installed)
@@ -65,9 +65,8 @@ the developer switches with a single constructor argument.
               |                       |
               +-----------+-----------+
                           |
-                   InterceptorBase
-                   (interceptor/base.py)
-                    pre_call / post_call
+                 interceptor/base.py
+              call() / call_async() / call_stream()
                           |
           +---------------+---------------+
           |               |               |
@@ -98,24 +97,23 @@ User code calls client.messages.create(...)
 GuardedAnthropic.messages.create()
     |
     v
-InterceptorBase.pre_call()
+call(real_fn, kwargs, guard)          [interceptor/base.py]
     |-- provider.estimate_tokens(request_kwargs)
     |-- backend.check_and_increment(keys, estimated)
     |       |-- allowed=False: raise BudgetExceeded (call never made)
     |       |-- allowed=True:  continue
-    |-- policy.evaluate_thresholds(states)
+    |-- _evaluate_thresholds(guard, keys, states, kwargs)
     |       |-- fire WARN callbacks
     |       |-- post WEBHOOK in background thread
-    |-- [if DEGRADE crossed] copy request_kwargs, swap model
+    |       |-- [if DEGRADE] copy kwargs, swap model
     |
     v
 Actual LLM API call
     |
     v
-InterceptorBase.post_call()
     |-- provider.extract_usage(response)
     |-- backend.force_increment(keys, delta)  [never rejects]
-    |-- otel.emit(span, metrics)
+    |-- guard.telemetry.emit(span, metrics)
     |
     v
 Response returned to user code unchanged
@@ -156,7 +154,7 @@ tokencap/
 │   │   └── openai.py        # OpenAIProvider
 │   │
 │   ├── interceptor/
-│   │   ├── base.py          # InterceptorBase: pre/post call logic, provider-agnostic
+│   │   ├── base.py          # call(), call_async(), call_stream(): provider-agnostic intercept functions
 │   │   ├── anthropic.py     # GuardedAnthropic: wraps sync + async Anthropic clients
 │   │   └── openai.py        # GuardedOpenAI: wraps openai.OpenAI
 │   │
@@ -233,6 +231,42 @@ class TokenUsage:
 
 ---
 
+## Exceptions (core/exceptions.py)
+
+```python
+class BudgetExceeded(Exception):
+    """
+    Raised by the BLOCK action before an LLM call is made.
+    The call is never sent to the provider.
+
+    Attributes:
+        check_result: CheckResult
+            Full state of every dimension at the time of the block.
+            check_result.violated lists the dimension names that caused the block.
+            check_result.states maps every dimension name to its BudgetState.
+    """
+    def __init__(self, check_result: CheckResult) -> None: ...
+    check_result: CheckResult
+
+
+class BackendError(Exception):
+    """
+    Raised when the storage backend encounters an unrecoverable error,
+    such as a lost Redis connection during check_and_increment.
+    The LLM call is not made when this is raised.
+    """
+
+
+class ConfigurationError(Exception):
+    """
+    Raised during Guard initialisation when the policy or backend
+    configuration is invalid. For example, a DimensionPolicy with a
+    limit of zero, or an unrecognised backend type.
+    """
+```
+
+---
+
 ## The Backend Protocol (backends/protocol.py)
 
 The most critical interface in the system. Both `SQLiteBackend` and `RedisBackend`
@@ -302,7 +336,23 @@ class Backend(Protocol):
     def reset(self, key: BudgetKey) -> None:
         """
         Reset used_tokens to zero. Does not remove or change the limit.
+        Also clears all fired threshold records for this key.
         Used for period resets (daily, hourly schedules) and in tests.
+        """
+        ...
+
+    def is_threshold_fired(self, key: BudgetKey, at_pct: float) -> bool:
+        """
+        Returns True if the threshold at at_pct has already fired for this key
+        in the current budget period. Used to enforce the fire-once rule.
+        """
+        ...
+
+    def mark_threshold_fired(self, key: BudgetKey, at_pct: float) -> None:
+        """
+        Record that the threshold at at_pct has fired for this key.
+        Subsequent calls to is_threshold_fired for the same key and at_pct
+        will return True until reset() is called.
         """
         ...
 ```
@@ -329,7 +379,18 @@ CREATE TABLE IF NOT EXISTS budgets (
     updated_at     TEXT    NOT NULL,
     PRIMARY KEY (key_dimension, key_identifier)
 );
+
+CREATE TABLE IF NOT EXISTS fired_thresholds (
+    key_dimension  TEXT    NOT NULL,
+    key_identifier TEXT    NOT NULL,
+    at_pct         REAL    NOT NULL,
+    fired_at       TEXT    NOT NULL,
+    PRIMARY KEY (key_dimension, key_identifier, at_pct)
+);
 ```
+
+`reset()` deletes rows from `fired_thresholds` matching the key as well as
+zeroing `used_tokens` in `budgets`. Both operations run in the same transaction.
 
 ### RedisBackend (backends/redis.py)
 
@@ -348,11 +409,17 @@ Two scripts:
 
 Key format: `tokencap:used:{dimension}:{identifier}`
 Limit key format: `tokencap:limit:{dimension}:{identifier}`
+Threshold fired key format: `tokencap:fired:{dimension}:{identifier}:{at_pct}`
 
 The `{identifier}` portion is treated as an opaque string. Colons within the
 identifier (e.g. `acme:2026-03-27`) are fine. Redis keys are plain strings, not
-parsed paths. The prefix `tokencap:used:` and `tokencap:limit:` is always the
-delimiter boundary.
+parsed paths.
+
+`is_threshold_fired` does a Redis `EXISTS` on the fired key.
+`mark_threshold_fired` does a Redis `SET` with no expiry (TTL is managed by
+`reset()`, which calls `DEL` on all fired keys for a given `BudgetKey`).
+`reset()` uses a Lua script to zero the used key and delete all fired threshold
+keys for the dimension+identifier in one atomic operation.
 
 Constructor: `RedisBackend(url="redis://localhost:6379")`
 
@@ -437,79 +504,578 @@ Pricing table covers: `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`
 
 ## The Interceptor (interceptor/)
 
-### base.py: InterceptorBase
+This section describes the interception mechanism in full. Claude Code must
+understand every call path before implementing any file in this package.
 
-Provider-agnostic. Receives a `Provider` and a `Guard`. Implements the call flow
-shared by `GuardedAnthropic` and `GuardedOpenAI`.
+---
 
-**Pre-call sequence:**
-1. Estimate tokens: `provider.estimate_tokens(request_kwargs)`
-2. Build `BudgetKey` list from guard's active dimensions and identifiers
-3. Call `backend.check_and_increment(keys, estimated_tokens)`
-4. If `CheckResult.allowed is False`:
-   - Raise `BudgetExceeded` with full `CheckResult` attached
-   - The API call is never made
-5. Evaluate thresholds on returned states:
-   - Fire WARN callbacks for any newly-crossed thresholds
-   - Post WEBHOOK payloads in background threads for any newly-crossed thresholds
-6. If a DEGRADE threshold has been newly crossed:
-   - Create a **copy** of `request_kwargs`. Never mutate the caller's dict.
-   - Swap `model` in the copy to `action.degrade_to`
-   - Proceed with the copied kwargs
-   - Record `original_model` for OTEL span
+### How Python attribute lookup enables interception
 
-**Post-call sequence:**
-1. Extract actual usage: `provider.extract_usage(response)`
-2. Compute delta: `actual.total - estimated_tokens`
-3. If delta > 0: call `backend.force_increment(keys, delta)`. This never raises and never rejects.
-4. Emit OTEL span and metrics
-5. Return original response to caller unchanged
+When a developer writes `client.messages.create(...)`, Python resolves this
+in two steps:
 
-**WEBHOOK detail:** All webhook HTTP posts run in a background daemon thread.
-They never block the call path. Failures are logged at `WARNING` level and
-swallowed. A webhook failure must never cause a call to fail.
+1. `client.messages`: Python looks up `messages` on the object
+2. `.create(...)`: Python calls `create` on whatever step 1 returned
 
-**DEGRADE persistence:** Once a DEGRADE threshold fires for a given key, all
-subsequent calls on that key use the degraded model until the budget period resets.
-The fired state is stored in the backend so it survives across `Guard` instances
-in distributed mode.
+If `messages` were not defined on `GuardedAnthropic` at all, Python would call
+`__getattr__("messages")`, which returns `self._client.messages`, the real SDK
+object. Any `.create()` call on that would go directly to the SDK. No interception.
 
-### anthropic.py: GuardedAnthropic
+The fix is to define `messages` as a `@property` on `GuardedAnthropic`. Python
+checks the class for a descriptor before falling back to `__getattr__`. The
+property returns a `GuardedMessages` instance, not the real messages object.
+From there, `create()` and `stream()` are defined as real methods on
+`GuardedMessages`, so tokencap code runs before the SDK is ever called.
 
-Wraps both `anthropic.Anthropic` (sync) and `anthropic.AsyncAnthropic` (async)
-using `__getattr__` delegation. All attribute access passes through to the
-underlying client except `.messages`, which returns a `GuardedMessages` proxy.
+This is the entire interception mechanism. `@property` intercepts the resource
+access. Defined methods on the proxy intercept the call. `__getattr__` handles
+everything else as pass-through.
+
+---
+
+### base.py: intercept functions
+
+`base.py` contains module-level functions, not a class. There is no
+`InterceptorBase` instance. The state lives in `Guard`. All functions take
+`guard` as an explicit argument.
 
 ```python
-class GuardedAnthropic:
-    def __init__(self, client: anthropic.Anthropic, guard: Guard) -> None: ...
+from tokencap.core.types import BudgetKey, TokenUsage
+from tokencap.core.exceptions import BudgetExceeded
+from tokencap.core.guard import Guard
+from typing import Any, Callable
+import threading
+import urllib.request
+import json
 
-    @property
-    def messages(self) -> GuardedMessages: ...
+
+def _build_keys(guard: Guard) -> list[BudgetKey]:
+    """Build the list of BudgetKeys for the current call from guard state."""
+    return [
+        BudgetKey(dimension=dim, identifier=guard.identifiers[dim])
+        for dim in guard.policy.dimensions
+    ]
+
+
+def _evaluate_thresholds(
+    guard: Guard,
+    keys: list[BudgetKey],
+    states: dict[str, Any],
+    kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Evaluate all thresholds against current states. Fire WARN callbacks
+    and WEBHOOK posts for newly-crossed thresholds. Apply DEGRADE if needed.
+    Returns a copy of kwargs with model swapped if DEGRADE fired,
+    or the original kwargs dict unchanged if no DEGRADE.
+    Never mutates the caller's kwargs.
+    """
+    call_kwargs = kwargs  # start with original, only copy if DEGRADE fires
+
+    for dim, state in states.items():
+        policy = guard.policy.dimensions[dim]
+        for threshold in policy.thresholds:
+            if state.pct_used < threshold.at_pct:
+                continue
+            key = BudgetKey(dimension=dim, identifier=guard.identifiers[dim])
+            if guard.backend.is_threshold_fired(key, threshold.at_pct):
+                continue
+            # Threshold newly crossed, fire actions in order
+            guard.backend.mark_threshold_fired(key, threshold.at_pct)
+            for action in threshold.actions:
+                if action.kind == "WARN" and action.callback:
+                    try:
+                        action.callback(guard.get_status())
+                    except Exception:
+                        pass  # WARN callback failure never propagates
+                elif action.kind == "WEBHOOK" and action.webhook_url:
+                    _fire_webhook(action.webhook_url, guard.get_status())
+                elif action.kind == "DEGRADE" and action.degrade_to:
+                    call_kwargs = dict(kwargs)  # copy on first DEGRADE
+                    call_kwargs["model"] = action.degrade_to
+                    guard.current_model = action.degrade_to
+                # BLOCK is handled before threshold evaluation (see call())
+
+    return call_kwargs
+
+
+def _fire_webhook(url: str, status: Any) -> None:
+    """Fire a webhook POST in a background daemon thread. Never blocks."""
+    def post() -> None:
+        try:
+            data = json.dumps({"status": str(status)}).encode()
+            req = urllib.request.Request(
+                url, data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=5)
+        except Exception:
+            import logging
+            logging.getLogger("tokencap").warning(
+                "Webhook POST to %s failed", url, exc_info=True
+            )
+    t = threading.Thread(target=post, daemon=True)
+    t.start()
+
+
+def call(
+    real_fn: Callable[..., Any],
+    kwargs: dict[str, Any],
+    guard: Guard,
+) -> Any:
+    """
+    Sync call path. Used by GuardedMessages.create() and
+    GuardedCompletions.create().
+
+    1. Estimate tokens
+    2. Atomic check-and-increment
+    3. Raise BudgetExceeded if blocked
+    4. Evaluate thresholds (WARN, WEBHOOK, DEGRADE)
+    5. Make the real SDK call
+    6. Reconcile actual vs estimated via force_increment
+    7. Emit OTEL
+    8. Return response
+    """
+    estimated = guard.provider.estimate_tokens(kwargs)
+    keys = _build_keys(guard)
+
+    result = guard.backend.check_and_increment(keys, estimated)
+    if not result.allowed:
+        raise BudgetExceeded(result)
+
+    call_kwargs = _evaluate_thresholds(guard, keys, result.states, kwargs)
+    original_model = kwargs.get("model", "")
+
+    response = real_fn(**call_kwargs)
+
+    actual = guard.provider.extract_usage(response)
+    delta = actual.total - estimated
+    if delta > 0:
+        final_states = guard.backend.force_increment(keys, delta)
+    else:
+        final_states = result.states
+
+    guard.telemetry.emit(
+        estimated=estimated,
+        actual=actual,
+        original_model=original_model,
+        actual_model=call_kwargs.get("model", original_model),
+        states=final_states,
+    )
+
+    return response
+
+
+async def call_async(
+    real_fn: Callable[..., Any],
+    kwargs: dict[str, Any],
+    guard: Guard,
+) -> Any:
+    """
+    Async call path. Identical logic to call() with await where needed.
+    Used by GuardedMessages.create() on AsyncAnthropic clients.
+    """
+    estimated = guard.provider.estimate_tokens(kwargs)
+    keys = _build_keys(guard)
+
+    result = guard.backend.check_and_increment(keys, estimated)
+    if not result.allowed:
+        raise BudgetExceeded(result)
+
+    call_kwargs = _evaluate_thresholds(guard, keys, result.states, kwargs)
+    original_model = kwargs.get("model", "")
+
+    response = await real_fn(**call_kwargs)
+
+    actual = guard.provider.extract_usage(response)
+    delta = actual.total - estimated
+    if delta > 0:
+        final_states = guard.backend.force_increment(keys, delta)
+    else:
+        final_states = result.states
+
+    guard.telemetry.emit(
+        estimated=estimated,
+        actual=actual,
+        original_model=original_model,
+        actual_model=call_kwargs.get("model", original_model),
+        states=final_states,
+    )
+
+    return response
+
+
+def call_stream(
+    real_fn: Callable[..., Any],
+    kwargs: dict[str, Any],
+    guard: Guard,
+) -> "GuardedStream":
+    """
+    Streaming call path. Returns a GuardedStream context manager.
+    The pre-call check runs immediately. Token usage is reconciled
+    when the stream context manager exits.
+    """
+    estimated = guard.provider.estimate_tokens(kwargs)
+    keys = _build_keys(guard)
+
+    result = guard.backend.check_and_increment(keys, estimated)
+    if not result.allowed:
+        raise BudgetExceeded(result)
+
+    call_kwargs = _evaluate_thresholds(guard, keys, result.states, kwargs)
+    original_model = kwargs.get("model", "")
+
+    return GuardedStream(
+        real_fn=real_fn,
+        call_kwargs=call_kwargs,
+        estimated=estimated,
+        keys=keys,
+        original_model=original_model,
+        guard=guard,
+    )
+
+
+class GuardedStream:
+    """
+    Context manager that wraps the SDK stream context manager.
+    Reconciles token usage on exit, including early exit.
+
+    Usage mirrors the SDK exactly:
+        with client.messages.stream(...) as stream:
+            for text in stream.text_stream:
+                print(text)
+
+    On normal exit: usage is extracted from the final message, reconciled.
+    On early exit (break, exception): the estimated token count is used as
+    the final count. A warning is logged. This prevents silent undercount
+    in the ledger.
+    """
+
+    def __init__(
+        self,
+        real_fn: Callable[..., Any],
+        call_kwargs: dict[str, Any],
+        estimated: int,
+        keys: list[BudgetKey],
+        original_model: str,
+        guard: Guard,
+    ) -> None:
+        self._real_fn = real_fn
+        self._call_kwargs = call_kwargs
+        self._estimated = estimated
+        self._keys = keys
+        self._original_model = original_model
+        self._guard = guard
+        self._stream_ctx: Any = None
+        self._usage: TokenUsage | None = None
+
+    def __enter__(self) -> Any:
+        self._stream_ctx = self._real_fn(**self._call_kwargs).__enter__()
+        return self._stream_ctx
+
+    def __exit__(
+        self,
+        exc_type: Any,
+        exc_val: Any,
+        exc_tb: Any,
+    ) -> bool:
+        result = self._stream_ctx.__exit__(exc_type, exc_val, exc_tb)
+
+        # Extract usage from the completed stream if available
+        try:
+            usage = self._guard.provider.extract_usage(self._stream_ctx)
+        except Exception:
+            usage = None
+
+        if usage is None or usage.total == 0:
+            # Early exit or provider gave no usage, fall back to estimate
+            import logging
+            if exc_type is not None:
+                logging.getLogger("tokencap").warning(
+                    "Stream exited early or returned no usage. "
+                    "Using pre-call estimate (%d tokens) for reconciliation.",
+                    self._estimated,
+                )
+            # No delta to reconcile, pre-call already debited the estimate
+            final_states = self._guard.backend.get_states(self._keys)
+        else:
+            delta = usage.total - self._estimated
+            if delta > 0:
+                final_states = self._guard.backend.force_increment(
+                    self._keys, delta
+                )
+            else:
+                final_states = self._guard.backend.get_states(self._keys)
+
+        self._guard.telemetry.emit(
+            estimated=self._estimated,
+            actual=usage or TokenUsage(
+                input_tokens=self._estimated,
+                output_tokens=0,
+            ),
+            original_model=self._original_model,
+            actual_model=self._call_kwargs.get("model", self._original_model),
+            states=final_states,
+        )
+
+        return result
+```
+
+**Key points about streaming:**
+
+The pre-call check (`check_and_increment`) runs in `call_stream()` before the
+context manager is returned to the developer. If the budget is exceeded, `BudgetExceeded`
+is raised before the stream is opened. The developer never enters the `with` block.
+
+Token usage reconciliation runs in `GuardedStream.__exit__()`. This fires whether
+the developer exits normally, via `break`, or via an exception. The pre-call estimate
+is already in the ledger. If usage data is available, the delta is reconciled via
+`force_increment`. If not (early exit, exception, provider returned nothing), the
+estimate stands and a warning is logged. The ledger is never in an unknown state.
+
+---
+
+### anthropic.py: GuardedAnthropic and GuardedMessages
+
+```python
+from typing import Any
+import anthropic
+from tokencap.core.guard import Guard
+from tokencap.interceptor.base import call, call_async, call_stream
+
+
+class GuardedMessages:
+    """
+    Proxy for anthropic.resources.Messages.
+    Intercepts create() and stream(). Everything else passes through.
+    """
+
+    def __init__(
+        self,
+        messages: anthropic.resources.Messages,
+        guard: Guard,
+    ) -> None:
+        self._messages = messages
+        self._guard = guard
+
+    def create(self, **kwargs: Any) -> anthropic.types.Message:
+        return call(self._messages.create, kwargs, self._guard)
+
+    async def create_async(self, **kwargs: Any) -> anthropic.types.Message:
+        return await call_async(self._messages.create, kwargs, self._guard)
+
+    def stream(self, **kwargs: Any) -> "GuardedStream":
+        return call_stream(self._messages.stream, kwargs, self._guard)
 
     def __getattr__(self, name: str) -> Any:
-        # api_key, base_url, and every other attribute pass through unchanged
+        # batch, count_tokens, and any other messages attributes pass through
+        return getattr(self._messages, name)
+
+
+class GuardedAnthropic:
+    """
+    Proxy for anthropic.Anthropic and anthropic.AsyncAnthropic.
+
+    @property intercepts .messages before __getattr__ is considered.
+    This is how the interception works, not through __getattr__.
+
+    All client-returning methods (with_options, with_raw_response,
+    with_streaming_response) are implemented explicitly with *args/**kwargs
+    passthrough so tokencap never owns the SDK signature.
+
+    Everything else delegates via __getattr__.
+    """
+
+    def __init__(
+        self,
+        client: anthropic.Anthropic,
+        guard: Guard,
+    ) -> None:
+        self._client = client
+        self._guard = guard
+        self._is_async = isinstance(client, anthropic.AsyncAnthropic)
+
+    @property
+    def messages(self) -> GuardedMessages:
+        return GuardedMessages(self._client.messages, self._guard)
+
+    def with_options(self, *args: Any, **kwargs: Any) -> "GuardedAnthropic":
+        return GuardedAnthropic(
+            self._client.with_options(*args, **kwargs), self._guard
+        )
+
+    def with_raw_response(self, *args: Any, **kwargs: Any) -> "GuardedAnthropic":
+        return GuardedAnthropic(
+            self._client.with_raw_response(*args, **kwargs), self._guard
+        )
+
+    def with_streaming_response(
+        self, *args: Any, **kwargs: Any
+    ) -> "GuardedAnthropic":
+        return GuardedAnthropic(
+            self._client.with_streaming_response(*args, **kwargs), self._guard
+        )
+
+    def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
 ```
 
-`GuardedMessages` proxies:
-- `.create(**kwargs)`: sync, through `InterceptorBase.call()`
-- `.stream(**kwargs)`: context manager, through `InterceptorBase.call()`.
-  Token usage is extracted from the final `message_stop` event.
-- `.create(**kwargs)` on async client: awaitable, through `InterceptorBase.call_async()`
+**Why `@property` and not `__getattr__` for `.messages`:**
+Python checks the class `__dict__` and MRO for data descriptors (like `@property`)
+before calling `__getattr__`. If `messages` were not a property, `__getattr__`
+would fire and return `self._client.messages`, the real SDK object, bypassing
+the entire interception chain.
 
-`tokencap.wrap()` detects whether the passed client is sync or async and returns
-the correct wrapper. The developer uses the same `wrap()` call in both cases.
+**Why `GuardedMessages` also has `__getattr__`:**
+`client.messages.batch`, `client.messages.count_tokens`, and any other method on
+the Anthropic messages resource pass through to the real `self._messages` object.
+They are not intercepted and not tracked.
 
-Note: `__getattr__` delegation means static type checkers will not see the full
-Anthropic client interface on `GuardedAnthropic`. This is an accepted trade-off
-for transparent wrapping. A stub file (`.pyi`) can be added in v0.2 if this causes
-downstream type-checking friction.
+**Async detection:**
+`tokencap.wrap()` checks `isinstance(client, anthropic.AsyncAnthropic)` and calls
+`create_async` instead of `create` on the `GuardedMessages` accordingly. The
+developer always calls `client.messages.create(...)`. The routing to async is
+internal.
 
-### openai.py: GuardedOpenAI
+---
 
-Same delegation pattern. Proxies `.chat.completions.create()` through
-`InterceptorBase.call()`. All other attributes pass through to the underlying client.
+### openai.py: GuardedOpenAI and GuardedCompletions
+
+```python
+from typing import Any
+import openai
+from tokencap.core.guard import Guard
+from tokencap.interceptor.base import call, call_async, call_stream
+
+
+class GuardedCompletions:
+    """
+    Proxy for openai.resources.chat.Completions.
+    Intercepts create(). Everything else passes through.
+    """
+
+    def __init__(
+        self,
+        completions: openai.resources.chat.Completions,
+        guard: Guard,
+    ) -> None:
+        self._completions = completions
+        self._guard = guard
+
+    def create(self, **kwargs: Any) -> Any:
+        # For streaming OpenAI calls, inject stream_options to get usage data.
+        # OpenAI does not return token usage in streaming by default.
+        # This is done in a copy of kwargs, never mutates the caller's dict.
+        if kwargs.get("stream"):
+            kwargs = dict(kwargs)
+            kwargs.setdefault(
+                "stream_options", {"include_usage": True}
+            )
+            return call_stream(self._completions.create, kwargs, self._guard)
+        return call(self._completions.create, kwargs, self._guard)
+
+    async def create_async(self, **kwargs: Any) -> Any:
+        if kwargs.get("stream"):
+            kwargs = dict(kwargs)
+            kwargs.setdefault(
+                "stream_options", {"include_usage": True}
+            )
+            return call_stream(self._completions.create, kwargs, self._guard)
+        return await call_async(self._completions.create, kwargs, self._guard)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._completions, name)
+
+
+class GuardedChat:
+    """Proxy for openai.resources.Chat. Intercepts .completions."""
+
+    def __init__(self, chat: Any, guard: Guard) -> None:
+        self._chat = chat
+        self._guard = guard
+
+    @property
+    def completions(self) -> GuardedCompletions:
+        return GuardedCompletions(self._chat.completions, self._guard)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._chat, name)
+
+
+class GuardedOpenAI:
+    """
+    Proxy for openai.OpenAI and openai.AsyncOpenAI.
+    Same pattern as GuardedAnthropic. Intercepts .chat via @property.
+    """
+
+    def __init__(self, client: openai.OpenAI, guard: Guard) -> None:
+        self._client = client
+        self._guard = guard
+
+    @property
+    def chat(self) -> GuardedChat:
+        return GuardedChat(self._client.chat, self._guard)
+
+    def with_options(self, *args: Any, **kwargs: Any) -> "GuardedOpenAI":
+        return GuardedOpenAI(
+            self._client.with_options(*args, **kwargs), self._guard
+        )
+
+    def with_raw_response(self, *args: Any, **kwargs: Any) -> "GuardedOpenAI":
+        return GuardedOpenAI(
+            self._client.with_raw_response(*args, **kwargs), self._guard
+        )
+
+    def with_streaming_response(
+        self, *args: Any, **kwargs: Any
+    ) -> "GuardedOpenAI":
+        return GuardedOpenAI(
+            self._client.with_streaming_response(*args, **kwargs), self._guard
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
+```
+
+**OpenAI streaming usage injection:**
+OpenAI's streaming API does not return token usage by default. Without
+`stream_options={"include_usage": True}`, `extract_usage()` gets zero tokens
+and reconciliation never fires. `GuardedCompletions.create()` detects `stream=True`
+and injects `stream_options` into a copy of kwargs using `setdefault` (so it
+does not override the developer's own `stream_options` if they set one).
+This is done before calling `call_stream()`.
+
+**Two levels of proxying for OpenAI:**
+OpenAI's resource hierarchy is `client.chat.completions.create()`. This requires
+two proxy layers: `GuardedChat` intercepts `.completions` via `@property`,
+`GuardedCompletions` intercepts `.create()`. The same `@property` pattern applies
+at each level.
+
+---
+
+### Attribute lookup resolution order (summary)
+
+For any attribute access on a guarded client, Python resolves in this order:
+
+```
+1. Data descriptors on the class (@property, __slots__)
+   -> .messages on GuardedAnthropic returns GuardedMessages
+   -> .chat on GuardedOpenAI returns GuardedChat
+
+2. Instance __dict__
+   -> _client, _guard stored here
+
+3. Non-data descriptors and class attributes
+   -> with_options, with_raw_response, with_streaming_response
+
+4. __getattr__ (only if nothing above matched)
+   -> api_key, base_url, models, beta, and everything else
+   -> delegates to self._client unchanged
+```
+
+This ordering is why `@property` works for interception and `__getattr__` works
+for pass-through. They occupy different slots in the lookup chain.
 
 ---
 
@@ -880,9 +1446,14 @@ None. Zero required dependencies beyond Python 3.10+.
 |-------|----------|-------------|
 | `tokencap[anthropic]` | `anthropic` | Anthropic SDK wrapping |
 | `tokencap[openai]` | `openai`, `tiktoken` | OpenAI SDK wrapping |
-| `tokencap[redis]` | `redis` | Distributed multi-process mode |
-| `tokencap[otel]` | `opentelemetry-api`, `opentelemetry-sdk` | OTEL metrics and traces |
-| `tokencap[all]` | All of the above | |
+| `tokencap[all]` | `anthropic`, `openai`, `tiktoken` | Both providers |
+
+For distributed mode, install `redis` independently: `pip install redis`.
+For OTEL, install `opentelemetry-api` independently: `pip install opentelemetry-api`.
+
+These are not tokencap extras because they are independent libraries with their
+own release cycles. tokencap imports them lazily and handles absence gracefully
+in both cases.
 
 The core library must import cleanly with zero optional dependencies installed.
 Every optional import is guarded. Every missing-dependency error message tells the
@@ -897,7 +1468,7 @@ user exactly what to run.
 Deliverables:
 - `tokencap/core/types.py`: all shared types, fully typed, frozen where appropriate
 - `tokencap/core/exceptions.py`: `BudgetExceeded`, `BackendError`, `ConfigurationError`
-- `tokencap/backends/protocol.py`: `Backend` Protocol including `force_increment`
+- `tokencap/backends/protocol.py`: `Backend` Protocol including `force_increment`, `is_threshold_fired`, `mark_threshold_fired`
 - `tokencap/backends/sqlite.py`: `SQLiteBackend`, atomic transactions
 - `tokencap/py.typed`: PEP 561 marker file (empty)
 - `pyproject.toml`: package metadata, optional dependency groups, no required deps
@@ -920,7 +1491,7 @@ Deliverables:
 - `tokencap/providers/protocol.py`: `Provider` Protocol, fully typed
 - `tokencap/providers/anthropic.py`: `AnthropicProvider`
 - `tokencap/providers/openai.py`: `OpenAIProvider`
-- `tokencap/interceptor/base.py`: `InterceptorBase`, full pre/post call flow
+- `tokencap/interceptor/base.py`: module-level functions `call()`, `call_async()`, `call_stream()`, `GuardedStream`
 - `tokencap/interceptor/anthropic.py`: `GuardedAnthropic`
 - `tokencap/interceptor/openai.py`: `GuardedOpenAI`
 - `tests/unit/test_providers.py`
