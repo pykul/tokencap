@@ -955,6 +955,9 @@ class GuardedAnthropic:
     def with_streaming_response(self) -> "GuardedAnthropic":
         return GuardedAnthropic(self._client.with_streaming_response, self._guard, self._provider)
 
+    def get_status(self) -> StatusResponse:
+        return self._guard.get_status()
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
 ```
@@ -1073,6 +1076,9 @@ class GuardedOpenAI:
     @property
     def with_streaming_response(self) -> "GuardedOpenAI":
         return GuardedOpenAI(self._client.with_streaming_response, self._guard, self._provider)
+
+    def get_status(self) -> StatusResponse:
+        return self._guard.get_status()
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)

@@ -771,3 +771,56 @@ The figures would silently drift after any provider repricing, showing
 inaccurate cost data with no warning. Showing inaccurate dollar figures is
 worse than showing none. Token counts are the authoritative unit — they are
 what the API returns and what tokencap enforces. They are always correct.
+
+---
+
+## D-046: OpenTelemetry uses UpDownCounter for gauge-like metrics
+
+**Decision:** `tokencap.tokens.remaining` and `tokencap.budget.pct_used` use
+`UpDownCounter` rather than a native Gauge type.
+
+**Why:** The stable OpenTelemetry Python metrics API does not have a Gauge
+instrument type. `UpDownCounter` is the recommended replacement for metrics
+that can go up or down. It provides equivalent functionality for dashboards
+and alerting.
+
+---
+
+## D-047: RedisBackend unit test uses MockRedisClient with threading.Lock
+
+**Decision:** The RedisBackend concurrent write test in `tests/unit/` uses a
+`MockRedisClient` class that simulates GET/SET/INCRBY/EXISTS/DEL and executes
+Lua script logic under a `threading.Lock` to simulate Redis atomicity.
+
+**Why:** Unit tests must not require a real Redis connection. The Lock-based
+mock faithfully simulates the atomic behaviour of Lua script execution in
+Redis. Real Redis atomicity is verified in `tests/live/test_redis_live.py`
+against a Docker container when available.
+
+---
+
+## D-048: Redis live test never skips, falls back to MockRedisClient
+
+**Decision:** `tests/live/test_redis_live.py` attempts to connect to Redis at
+`REDIS_URL` (default `redis://localhost:6379`). When Redis is reachable, the
+test runs the concurrent write acceptance test against real Redis. When Redis
+is not reachable, it falls back to `MockRedisClient` and runs the same test.
+
+**Why:** Per CLAUDE.md Testing Rules, live tests never skip. The fallback
+ensures the full code path is always exercised. `make redis-up` starts a local
+Redis container for developers who want the real test.
+
+---
+
+## D-049: get_status() on the wrapped client
+
+**Decision:** `GuardedAnthropic` and `GuardedOpenAI` expose a `get_status()`
+method that delegates to `self._guard.get_status()`. `tokencap.get_status()`
+remains as the module-level alternative.
+
+**Why:** After calling `wrap()`, the developer always has the wrapped client
+in hand. Requiring them to go back to the module level for status is
+unnecessary indirection. `client.get_status()` works at all three tiers
+because GuardedAnthropic and GuardedOpenAI always hold a reference to their
+Guard. `tokencap.get_status()` remains for cases where the client is not in
+scope (e.g. status checks in a separate monitoring function).

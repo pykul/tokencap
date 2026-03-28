@@ -371,6 +371,19 @@ class TestGuardedAnthropic:
         result = guarded.with_options(timeout=30)
         assert isinstance(result, GuardedAnthropic)
 
+    def test_get_status(
+        self, stub_guard: Guard, mock_provider: MagicMock
+    ) -> None:
+        """get_status() delegates to guard.get_status()."""
+        from tokencap.interceptor.anthropic import GuardedAnthropic
+        from tokencap.status.api import StatusResponse
+
+        mock_client = MagicMock()
+        mock_client.__class__ = type("Anthropic", (), {})
+        guarded = GuardedAnthropic(mock_client, stub_guard, mock_provider)
+        status = guarded.get_status()
+        assert isinstance(status, StatusResponse)
+
 
 class TestGuardedOpenAI:
     """Tests for GuardedOpenAI (mocked openai SDK)."""
@@ -413,3 +426,16 @@ class TestGuardedOpenAI:
         result = gc.create(**original_kwargs)
         assert original_kwargs == original_copy
         assert isinstance(result, GuardedStream)
+
+    def test_get_status(
+        self, stub_guard: Guard, mock_provider: MagicMock
+    ) -> None:
+        """get_status() delegates to guard.get_status()."""
+        from tokencap.interceptor.openai import GuardedOpenAI
+        from tokencap.status.api import StatusResponse
+
+        mock_client = MagicMock()
+        mock_client.__class__ = type("OpenAI", (), {})
+        guarded = GuardedOpenAI(mock_client, stub_guard, mock_provider)
+        status = guarded.get_status()
+        assert isinstance(status, StatusResponse)

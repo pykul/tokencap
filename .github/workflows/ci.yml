@@ -9,6 +9,16 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,3 +41,9 @@ jobs:
             make test PYTHON="python$py"
             echo "::endgroup::"
           done
+      - name: Live tests (mock providers, real Redis)
+        run: |
+          pip install redis
+          make test-live
+        env:
+          REDIS_URL: redis://localhost:6379

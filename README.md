@@ -37,6 +37,10 @@ response = client.messages.create(
     max_tokens=1024,
     messages=[{"role": "user", "content": "Summarize this document."}],
 )
+
+status = client.get_status()
+print(f"session: {status.dimensions['session'].used} tokens used")
+# session: 312 tokens used
 ```
 
 `wrap()` prints a startup message to stdout so there are no surprises. By default,
@@ -51,6 +55,15 @@ One argument. No other changes.
 ```python
 client = tokencap.wrap(anthropic.Anthropic(), limit=50_000)
 # [tokencap] session started: session=a3f1c2d4 backend=sqlite:tokencap.db limit=50000 tokens
+```
+
+Check status at any time:
+
+```python
+status = client.get_status()
+for dim, state in status.dimensions.items():
+    print(f"{dim}: {state.used:,} / {state.limit:,} tokens ({state.pct_used:.1%})")
+# session: 31,200 / 50,000 tokens (62.4%)
 ```
 
 When the session hits 50,000 tokens, `BudgetExceededError` is raised before the
@@ -131,7 +144,7 @@ except tokencap.BudgetExceededError as e:
 Check the final state:
 
 ```python
-status = tokencap.get_status()
+status = client.get_status()
 for dim, state in status.dimensions.items():
     print(f"{dim}: {state.used:,} / {state.limit:,} tokens ({state.pct_used:.1%})")
 # session: 51,200 / 50,000 tokens (102.4%)
@@ -195,13 +208,19 @@ tokencap.Threshold(
 ## Checking status
 
 ```python
-status = tokencap.get_status()
+client = tokencap.wrap(anthropic.Anthropic(), limit=50_000)
+# [tokencap] session started: session=a3f1c2d4 backend=sqlite:tokencap.db limit=50000 tokens
 
+# ... after some calls ...
+
+status = client.get_status()
 for dim, state in status.dimensions.items():
     print(f"{dim}: {state.used:,} / {state.limit:,} tokens ({state.pct_used:.1%})")
-
 # session: 31,200 / 50,000 tokens (62.4%)
 ```
+
+`tokencap.get_status()` also works when the client is not in scope — it reads
+from the global Guard singleton created by `wrap()`.
 
 ---
 
@@ -344,6 +363,31 @@ client = tokencap.wrap(anthropic.Anthropic())
 
 ---
 
+## Development
+
+### Running tests
+
+```bash
+pip install -e ".[dev]"
+pip install redis opentelemetry-api
+make test          # unit + integration, no external services needed
+make redis-up      # start local Redis container
+make test-live     # live tests (mock providers, real Redis)
+make redis-down    # stop Redis container
+```
+
+### Lint
+
+```bash
+make lint          # ruff + mypy --strict
+```
+
+### Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
+
+---
+
 ## OTEL integration
 
 tokencap emits OpenTelemetry metrics after every call if `opentelemetry-api` is
@@ -404,8 +448,17 @@ Wraps an Anthropic or OpenAI client (sync or async). `limit` is a token count
 shorthand for BLOCK at 100%. `policy` accepts a full `Policy` object. `limit`
 and `policy` are mutually exclusive.
 
+The wrapped client has `get_status()` directly:
+
 ```python
-tokencap.get_status()  # returns StatusResponse
+client = tokencap.wrap(anthropic.Anthropic())
+status = client.get_status()  # returns StatusResponse
+```
+
+Module-level functions for when the client is not in scope:
+
+```python
+tokencap.get_status()  # returns StatusResponse from global Guard
 tokencap.teardown()    # closes backend connections, resets global Guard
 ```
 

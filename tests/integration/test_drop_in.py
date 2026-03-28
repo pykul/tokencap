@@ -50,7 +50,7 @@ class TestTier1:
             messages=[{"role": "user", "content": "Hi"}],
         )
         assert response.content[0].text == "Hi"
-        status = tokencap.get_status()
+        status = client.get_status()
         assert status.dimensions["session"].used > 0
 
 
@@ -91,7 +91,7 @@ class TestTier3:
             model="claude-sonnet-4-6", max_tokens=100,
             messages=[{"role": "user", "content": "Hi"}],
         )
-        status = tokencap.get_status()
+        status = client.get_status()
         assert status.dimensions["session"].used > 0
 
     def test_limit_and_policy_raises(self) -> None:
@@ -285,7 +285,7 @@ class TestInitThenWrap:
             messages=[{"role": "user", "content": "Hi"}],
         )
         assert response.content[0].text == "Hi"
-        status = tokencap.get_status()
+        status = client.get_status()
         assert status.dimensions["session"].used > 0
 
     def test_init_then_wrap_openai(
@@ -307,7 +307,7 @@ class TestInitThenWrap:
             messages=[{"role": "user", "content": "Hi"}],
         )
         assert response.choices[0].message.content == "Hi"
-        status = tokencap.get_status()
+        status = client.get_status()
         assert status.dimensions["session"].used > 0
 
 
