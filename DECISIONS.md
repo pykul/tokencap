@@ -756,3 +756,18 @@ of "next unfired" does not apply to them — a BLOCK threshold is never
 "fired and done." Including BLOCK in `next_threshold` would be
 misleading: the developer would see a BLOCK threshold as "upcoming"
 when it is actually already enforcing on every call.
+
+---
+
+## D-045: cost_usd removed from BudgetState and Provider Protocol
+
+**Decision:** The `cost_usd` field was removed from `BudgetState`. The
+`token_cost_usd()` method was removed from the `Provider` Protocol. The
+pricing tables in `AnthropicProvider` and `OpenAIProvider` were removed.
+
+**Why:** The dollar cost calculation depended on a static hardcoded pricing
+table. Neither Anthropic nor OpenAI provides a machine-readable pricing API.
+The figures would silently drift after any provider repricing, showing
+inaccurate cost data with no warning. Showing inaccurate dollar figures is
+worse than showing none. Token counts are the authoritative unit — they are
+what the API returns and what tokencap enforces. They are always correct.

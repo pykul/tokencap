@@ -28,7 +28,6 @@ def _build_state(key: BudgetKey, limit: int, used: int) -> BudgetState:
         used=used,
         remaining=remaining,
         pct_used=pct_used,
-        cost_usd=0.0,
     )
 
 

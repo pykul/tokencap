@@ -26,7 +26,6 @@ class BudgetState:
     used: int
     remaining: int
     pct_used: float
-    cost_usd: float
 
 
 @dataclass
@@ -51,8 +50,7 @@ class TokenUsage:
     def total(self) -> int:
         """Input + output tokens only.
 
-        Cache tokens are tracked separately for cost calculation but excluded
-        from the enforcement total to avoid double-counting on Anthropic prompt
-        cache hits.
+        Cache tokens are tracked separately but excluded from the enforcement
+        total to avoid double-counting on Anthropic prompt cache hits.
         """
         return self.input_tokens + self.output_tokens

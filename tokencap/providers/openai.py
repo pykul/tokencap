@@ -1,4 +1,4 @@
-"""OpenAI provider: token estimation, usage extraction, and pricing."""
+"""OpenAI provider: token estimation and usage extraction."""
 
 from __future__ import annotations
 
@@ -12,20 +12,6 @@ try:
     _TIKTOKEN_AVAILABLE = True
 except ImportError:
     _TIKTOKEN_AVAILABLE = False
-
-# Per-million-token rates: (input_rate, output_rate)
-_PRICING: dict[str, tuple[float, float]] = {
-    "gpt-4o": (2.50, 10.0),
-    "gpt-4o-mini": (0.15, 0.60),
-    "gpt-4-turbo": (10.0, 30.0),
-    "gpt-4": (30.0, 60.0),
-    "gpt-3.5-turbo": (0.50, 1.50),
-    "o1": (15.0, 60.0),
-    "o1-mini": (3.0, 12.0),
-    "o3": (10.0, 40.0),
-    "o3-mini": (1.10, 4.40),
-    "o4-mini": (1.10, 4.40),
-}
 
 
 class OpenAIProvider:
@@ -76,16 +62,3 @@ class OpenAIProvider:
             return str(request_kwargs.get("model", ""))
         except Exception:
             return ""
-
-    def token_cost_usd(self, model: str, usage: TokenUsage) -> float:
-        """Compute dollar cost for display. Never raises."""
-        try:
-            rates = _PRICING.get(model)
-            if rates is None:
-                return 0.0
-            input_rate, output_rate = rates
-            return (
-                usage.input_tokens * input_rate + usage.output_tokens * output_rate
-            ) / 1_000_000
-        except Exception:
-            return 0.0

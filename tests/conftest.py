@@ -162,7 +162,6 @@ def mock_provider() -> MagicMock:
     provider.estimate_tokens.return_value = 100
     provider.extract_usage.return_value = TokenUsage(input_tokens=50, output_tokens=50)
     provider.get_model.return_value = "claude-sonnet-4-6"
-    provider.token_cost_usd.return_value = 0.001
     return provider
 
 
@@ -172,7 +171,7 @@ def mock_backend() -> MagicMock:
     backend = MagicMock()
     key = BudgetKey(dimension="session", identifier="test-id")
     state = BudgetState(
-        key=key, limit=10000, used=100, remaining=9900, pct_used=0.01, cost_usd=0.0
+        key=key, limit=10000, used=100, remaining=9900, pct_used=0.01
     )
     backend.check_and_increment.return_value = CheckResult(
         allowed=True, states={"session": state}, violated=[]
