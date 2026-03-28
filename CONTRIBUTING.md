@@ -14,13 +14,11 @@ Clone the repo and install in editable mode with all dependencies:
 git clone https://github.com/pykul/tokencap
 cd tokencap
 pip install -e ".[dev]"
-pip install redis opentelemetry-api
 ```
 
-The `dev` extra includes both provider SDKs (anthropic, openai, tiktoken)
-and all dev tools (pytest, pytest-httpx, mypy, ruff). Redis and
-opentelemetry-api are installed separately because they are optional
-runtime dependencies, not dev-only tools.
+The `dev` extra includes both provider SDKs (anthropic, openai, tiktoken),
+redis, opentelemetry-api, and all dev tools (pytest, pytest-httpx, mypy, ruff).
+A single install gives you everything needed to run tests and lint.
 
 ## Environment variables
 
