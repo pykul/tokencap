@@ -117,6 +117,10 @@ class GuardedAnthropic:
             self._provider,
         )
 
+    def get_status(self) -> Any:
+        """Return the current budget status for this client's Guard."""
+        return self._guard.get_status()
+
     def __getattr__(self, name: str) -> Any:
         # api_key, base_url, models, beta, and everything else passes through untracked
         return getattr(self._client, name)

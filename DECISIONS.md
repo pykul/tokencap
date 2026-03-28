@@ -809,3 +809,18 @@ is not reachable, it falls back to `MockRedisClient` and runs the same test.
 **Why:** Per CLAUDE.md Testing Rules, live tests never skip. The fallback
 ensures the full code path is always exercised. `make redis-up` starts a local
 Redis container for developers who want the real test.
+
+---
+
+## D-049: get_status() on the wrapped client
+
+**Decision:** `GuardedAnthropic` and `GuardedOpenAI` expose a `get_status()`
+method that delegates to `self._guard.get_status()`. `tokencap.get_status()`
+remains as the module-level alternative.
+
+**Why:** After calling `wrap()`, the developer always has the wrapped client
+in hand. Requiring them to go back to the module level for status is
+unnecessary indirection. `client.get_status()` works at all three tiers
+because GuardedAnthropic and GuardedOpenAI always hold a reference to their
+Guard. `tokencap.get_status()` remains for cases where the client is not in
+scope (e.g. status checks in a separate monitoring function).
