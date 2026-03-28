@@ -374,15 +374,9 @@ If `opentelemetry-api` is not installed, all telemetry is a no-op.
 Estimation runs before the call. Actual usage is reconciled after. The delta is
 debited automatically. You never pay twice.
 
----
-
-## Supported models
-
-**Anthropic:** claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5, claude-3-opus,
-claude-3-sonnet, claude-3-haiku
-
-**OpenAI:** gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-4, gpt-3.5-turbo, o1, o1-mini,
-o3, o3-mini, o4-mini
+tokencap works with any model string passed to the provider SDK. Token estimation
+uses the provider SDK counter where available and falls back to character estimation
+for unknown models. No configuration is needed to use new or custom model names.
 
 ---
 
