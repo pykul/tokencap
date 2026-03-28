@@ -217,9 +217,34 @@ class TestCheckAndIncrement:
         assert states["dim_a"].used == 0
         assert states["dim_b"].used == 0
 
+    def test_multiple_keys_all_allowed(self, backend: Any) -> None:
+        """When all keys are within limits, all are incremented."""
+        key_a = BudgetKey(dimension="dim_a", identifier="id_a")
+        key_b = BudgetKey(dimension="dim_b", identifier="id_b")
+        backend.set_limit(key_a, 1000)
+        backend.set_limit(key_b, 1000)
+        result = backend.check_and_increment([key_a, key_b], 100)
+        assert result.allowed is True
+        assert result.states["dim_a"].used == 100
+        assert result.states["dim_b"].used == 100
+
+    def test_one_past_limit(self, backend: Any, sample_key: BudgetKey) -> None:
+        """Filling budget exactly then adding 1 more token is rejected."""
+        backend.set_limit(sample_key, 100)
+        result = backend.check_and_increment([sample_key], 100)
+        assert result.allowed is True
+        result = backend.check_and_increment([sample_key], 1)
+        assert result.allowed is False
+
 
 class TestForceIncrement:
     """force_increment — parametrized over both backends."""
+
+    def test_force_increment_basic(self, backend: Any, sample_key: BudgetKey) -> None:
+        """force_increment within limit succeeds."""
+        backend.set_limit(sample_key, 1000)
+        states = backend.force_increment([sample_key], 500)
+        assert states["session"].used == 500
 
     def test_force_increment_beyond_limit(self, backend: Any, sample_key: BudgetKey) -> None:
         """force_increment succeeds even when over limit."""
@@ -227,6 +252,14 @@ class TestForceIncrement:
         states = backend.force_increment([sample_key], 200)
         assert states["session"].used == 200
         assert states["session"].remaining == -100
+
+    def test_force_increment_after_budget_full(self, backend: Any, sample_key: BudgetKey) -> None:
+        """force_increment works after check_and_increment filled the budget."""
+        backend.set_limit(sample_key, 100)
+        backend.check_and_increment([sample_key], 100)
+        states = backend.force_increment([sample_key], 50)
+        assert states["session"].used == 150
+        assert states["session"].remaining == -50
 
 
 class TestThresholdFired:
