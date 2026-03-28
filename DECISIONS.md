@@ -582,3 +582,30 @@ which is the same signal. A single job also starts faster because it
 avoids the overhead of provisioning five runners. The Makefile accepts
 `PYTHON=pythonX.Y` so each loop iteration runs tests under the correct
 interpreter.
+
+---
+
+## D-037: BLOCK is exempt from the fire-once rule
+
+**Decision:** The fire-once rule (D-007) applies only to WARN and WEBHOOK
+actions. BLOCK actions never call `is_threshold_fired` or
+`mark_threshold_fired`. Every call that crosses a BLOCK threshold is
+blocked, not just the first.
+
+**Why:** WARN and WEBHOOK are notifications. Firing them on every call
+after crossing the threshold creates alert storms and burns webhook
+quotas. The fire-once rule prevents this by recording that the threshold
+has been crossed and skipping subsequent notifications.
+
+BLOCK is enforcement, not notification. Its purpose is to prevent the
+LLM call from being made. If BLOCK only fired once, the first call
+after crossing the threshold would be blocked but all subsequent calls
+would proceed unchecked. That defeats the purpose of a budget limit.
+
+Therefore `_evaluate_thresholds` checks `has_block` before consulting
+the fired-threshold state. When a threshold contains a BLOCK action,
+the function skips the fire-once check entirely, executes any WARN and
+WEBHOOK actions on the same threshold (so the caller has observable
+context before the exception), then raises `BudgetExceededError`.
+DEGRADE is skipped when BLOCK is present on the same threshold because
+there is no call to degrade — the call is not made.
