@@ -187,16 +187,15 @@ def mock_backend() -> MagicMock:
 def stub_guard(
     sample_policy: Policy,
     mock_backend: MagicMock,
-    mock_provider: MagicMock,
 ) -> Guard:
-    """Guard stub wired to mock backend and provider.
+    """Guard wired to mock backend.
 
-    Override by passing different sample_policy, mock_backend, or
-    mock_provider fixtures, or by mutating their return values in the test.
+    Guard is a stateless config holder — it does not store provider.
+    Tests that need a provider should set it on the wrapped client directly
+    or pass it to call()/call_async()/call_stream() explicitly.
     """
     return Guard(
         policy=sample_policy,
         backend=mock_backend,
-        provider=mock_provider,
         identifiers={"session": "test-id"},
     )

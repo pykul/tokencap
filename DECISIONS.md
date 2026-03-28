@@ -702,3 +702,20 @@ Both rules are suppressed globally rather than with per-line `noqa`
 comments because the patterns recur in every call path and the
 justification is the same in every case: keep implementation aligned
 with the documented spec.
+
+---
+
+## D-042: Guard is a stateless config holder; provider lives on the wrapped client
+
+**Decision:** Guard holds policy, identifiers, backend, and telemetry. It does
+not hold `provider` or `current_model`. Provider is created per `wrap_*` call
+and passed to the wrapped client (GuardedAnthropic / GuardedOpenAI), which
+passes it through to GuardedMessages / GuardedCompletions and ultimately to
+`call()`, `call_async()`, and `call_stream()` as an explicit argument.
+
+**Why:** Provider and current_model are mutable call-time state. Storing them
+on Guard means a single Guard wrapping both an Anthropic and an OpenAI client
+would overwrite the provider on each `wrap_*` call, causing cross-contamination.
+By storing provider on the wrapped client, each wrapped client owns its own
+provider instance. `call()` receives provider explicitly from the caller,
+making the data flow visible and preventing any shared mutable state on Guard.

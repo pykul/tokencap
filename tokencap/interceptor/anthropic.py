@@ -31,23 +31,29 @@ class GuardedMessages:
         self,
         messages: Any,
         guard: Guard,
+        provider: Any,
         *,
         is_async: bool,
     ) -> None:
-        """Initialise with the real messages resource, guard, and async flag."""
+        """Initialise with the real messages resource, guard, provider, and async flag."""
         self._messages = messages
         self._guard = guard
+        self._provider = provider
         self._is_async = is_async
 
     def create(self, **kwargs: Any) -> Any:
         """Intercept messages.create(). Routes to async if client is async."""
         if self._is_async:
-            return call_async(self._messages.create, kwargs, self._guard)
-        return call(self._messages.create, kwargs, self._guard)
+            return call_async(
+                self._messages.create, kwargs, self._guard, self._provider
+            )
+        return call(self._messages.create, kwargs, self._guard, self._provider)
 
     def stream(self, **kwargs: Any) -> GuardedStream:
         """Intercept messages.stream(). Returns a GuardedStream context manager."""
-        return call_stream(self._messages.stream, kwargs, self._guard)
+        return call_stream(
+            self._messages.stream, kwargs, self._guard, self._provider
+        )
 
     def __getattr__(self, name: str) -> Any:
         # batch, count_tokens, and any other messages attributes pass through untracked
@@ -67,10 +73,12 @@ class GuardedAnthropic:
         self,
         client: anthropic.Anthropic,
         guard: Guard,
+        provider: Any,
     ) -> None:
-        """Initialise with the real client and guard."""
+        """Initialise with the real client, guard, and provider."""
         self._client = client
         self._guard = guard
+        self._provider = provider
         self._is_async = isinstance(client, anthropic.AsyncAnthropic)
 
     @property
@@ -79,27 +87,34 @@ class GuardedAnthropic:
         return GuardedMessages(
             self._client.messages,
             self._guard,
+            self._provider,
             is_async=self._is_async,
         )
 
     def with_options(self, *args: Any, **kwargs: Any) -> GuardedAnthropic:
         """Return a new GuardedAnthropic wrapping the client with updated options."""
         return GuardedAnthropic(
-            self._client.with_options(*args, **kwargs), self._guard
+            self._client.with_options(*args, **kwargs),
+            self._guard,
+            self._provider,
         )
 
     @property
     def with_raw_response(self) -> GuardedAnthropic:
         """Return a new GuardedAnthropic wrapping the raw-response client."""
         return GuardedAnthropic(
-            self._client.with_raw_response, self._guard  # type: ignore[arg-type]
+            self._client.with_raw_response,  # type: ignore[arg-type]
+            self._guard,
+            self._provider,
         )
 
     @property
     def with_streaming_response(self) -> GuardedAnthropic:
         """Return a new GuardedAnthropic wrapping the streaming-response client."""
         return GuardedAnthropic(
-            self._client.with_streaming_response, self._guard  # type: ignore[arg-type]
+            self._client.with_streaming_response,  # type: ignore[arg-type]
+            self._guard,
+            self._provider,
         )
 
     def __getattr__(self, name: str) -> Any:

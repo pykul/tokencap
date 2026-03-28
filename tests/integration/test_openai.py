@@ -42,11 +42,11 @@ class TestOpenAIIntegration:
         })
         provider = OpenAIProvider()
         guard = Guard(
-            policy=policy, backend=backend, provider=provider,
+            policy=policy, backend=backend,
             identifiers={"session": "integration-test"},
         )
         client = openai.OpenAI(api_key="sk-fake-key")
-        guarded = GuardedOpenAI(client, guard)
+        guarded = GuardedOpenAI(client, guard, provider)
 
         response = guarded.chat.completions.create(
             model="gpt-4o",
@@ -74,11 +74,11 @@ class TestOpenAIIntegration:
         })
         provider = OpenAIProvider()
         guard = Guard(
-            policy=policy, backend=backend, provider=provider,
+            policy=policy, backend=backend,
             identifiers={"session": "block-test"},
         )
         client = openai.OpenAI(api_key="sk-fake-key")
-        guarded = GuardedOpenAI(client, guard)
+        guarded = GuardedOpenAI(client, guard, provider)
 
         with pytest.raises(BudgetExceededError):
             guarded.chat.completions.create(
@@ -97,11 +97,11 @@ class TestOpenAIIntegration:
         })
         provider = OpenAIProvider()
         guard = Guard(
-            policy=policy, backend=backend, provider=provider,
+            policy=policy, backend=backend,
             identifiers={"session": "stream-test"},
         )
         client = openai.OpenAI(api_key="sk-fake-key")
-        guarded = GuardedOpenAI(client, guard)
+        guarded = GuardedOpenAI(client, guard, provider)
 
         original_kwargs = {"model": "gpt-4o", "stream": True, "messages": []}
         original_copy = dict(original_kwargs)

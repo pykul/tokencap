@@ -27,16 +27,16 @@ class TestCall:
     """Tests for the sync call() function."""
 
     def test_call_allowed(
-        self, stub_guard: Guard, mock_backend: MagicMock
+        self, stub_guard: Guard, mock_backend: MagicMock, mock_provider: MagicMock
     ) -> None:
         """Backend returns allowed=True: real_fn called, response returned."""
         real_fn = MagicMock(return_value="response")
-        result = call(real_fn, {"model": "test"}, stub_guard)
+        result = call(real_fn, {"model": "test"}, stub_guard, mock_provider)
         assert result == "response"
         real_fn.assert_called_once()
 
     def test_call_blocked_by_check(
-        self, stub_guard: Guard, mock_backend: MagicMock
+        self, stub_guard: Guard, mock_backend: MagicMock, mock_provider: MagicMock
     ) -> None:
         """Backend returns allowed=False: BudgetExceededError, real_fn never called."""
         mock_backend.check_and_increment.return_value = CheckResult(
@@ -49,7 +49,7 @@ class TestCall:
         )
         real_fn = MagicMock()
         with pytest.raises(BudgetExceededError):
-            call(real_fn, {"model": "test"}, stub_guard)
+            call(real_fn, {"model": "test"}, stub_guard, mock_provider)
         real_fn.assert_not_called()
 
     def test_call_reconciliation(
@@ -61,7 +61,7 @@ class TestCall:
             input_tokens=60, output_tokens=60
         )
         real_fn = MagicMock(return_value="response")
-        call(real_fn, {"model": "test"}, stub_guard)
+        call(real_fn, {"model": "test"}, stub_guard, mock_provider)
         # delta = 120 - 50 = 70
         mock_backend.force_increment.assert_called_once()
         args = mock_backend.force_increment.call_args
@@ -76,15 +76,17 @@ class TestCall:
             input_tokens=50, output_tokens=50
         )
         real_fn = MagicMock(return_value="response")
-        call(real_fn, {"model": "test"}, stub_guard)
+        call(real_fn, {"model": "test"}, stub_guard, mock_provider)
         mock_backend.force_increment.assert_not_called()
 
-    def test_call_kwargs_not_mutated(self, stub_guard: Guard) -> None:
+    def test_call_kwargs_not_mutated(
+        self, stub_guard: Guard, mock_provider: MagicMock
+    ) -> None:
         """Original kwargs dict is unchanged after call."""
         original = {"model": "test", "messages": []}
         original_copy = dict(original)
         real_fn = MagicMock(return_value="response")
-        call(real_fn, original, stub_guard)
+        call(real_fn, original, stub_guard, mock_provider)
         assert original == original_copy
 
 
@@ -100,18 +102,16 @@ class TestEvaluateThresholds:
         self,
         policy: Policy,
         mock_backend: MagicMock,
-        mock_provider: MagicMock,
     ) -> Guard:
         """Create a Guard with the given policy."""
         return Guard(
             policy=policy,
             backend=mock_backend,
-            provider=mock_provider,
             identifiers={"session": "test-id"},
         )
 
     def test_warn_fires_callback(
-        self, mock_backend: MagicMock, mock_provider: MagicMock
+        self, mock_backend: MagicMock
     ) -> None:
         """WARN threshold crossed: callback invoked."""
         callback = MagicMock()
@@ -121,7 +121,7 @@ class TestEvaluateThresholds:
                 make_action(kind="WARN", callback=callback),
             ])],
         )})
-        guard = self._make_guard(policy, mock_backend, mock_provider)
+        guard = self._make_guard(policy, mock_backend)
         key = BudgetKey("session", "test-id")
         state = BudgetState(
             key=key, limit=1000, used=600, remaining=400, pct_used=0.6, cost_usd=0.0
@@ -130,7 +130,7 @@ class TestEvaluateThresholds:
         callback.assert_called_once()
 
     def test_warn_fire_once(
-        self, mock_backend: MagicMock, mock_provider: MagicMock
+        self, mock_backend: MagicMock
     ) -> None:
         """Same WARN threshold crossed twice: callback fires only once."""
         callback = MagicMock()
@@ -140,7 +140,7 @@ class TestEvaluateThresholds:
                 make_action(kind="WARN", callback=callback),
             ])],
         )})
-        guard = self._make_guard(policy, mock_backend, mock_provider)
+        guard = self._make_guard(policy, mock_backend)
         key = BudgetKey("session", "test-id")
         state = BudgetState(
             key=key, limit=1000, used=600, remaining=400, pct_used=0.6, cost_usd=0.0
@@ -151,7 +151,7 @@ class TestEvaluateThresholds:
         callback.assert_called_once()
 
     def test_block_raises(
-        self, mock_backend: MagicMock, mock_provider: MagicMock
+        self, mock_backend: MagicMock
     ) -> None:
         """BLOCK threshold crossed: BudgetExceededError raised."""
         policy = make_policy(dimensions={"session": make_dimension_policy(
@@ -160,7 +160,7 @@ class TestEvaluateThresholds:
                 make_action(kind="BLOCK"),
             ])],
         )})
-        guard = self._make_guard(policy, mock_backend, mock_provider)
+        guard = self._make_guard(policy, mock_backend)
         key = BudgetKey("session", "test-id")
         state = BudgetState(
             key=key, limit=1000, used=1000, remaining=0, pct_used=1.0, cost_usd=0.0
@@ -170,7 +170,7 @@ class TestEvaluateThresholds:
         assert "session" in exc_info.value.check_result.violated
 
     def test_block_refires_every_call(
-        self, mock_backend: MagicMock, mock_provider: MagicMock
+        self, mock_backend: MagicMock
     ) -> None:
         """BLOCK threshold raises on every call, not just the first (D-037)."""
         policy = make_policy(dimensions={"session": make_dimension_policy(
@@ -179,7 +179,7 @@ class TestEvaluateThresholds:
                 make_action(kind="BLOCK"),
             ])],
         )})
-        guard = self._make_guard(policy, mock_backend, mock_provider)
+        guard = self._make_guard(policy, mock_backend)
         key = BudgetKey("session", "test-id")
         state = BudgetState(
             key=key, limit=1000, used=1000, remaining=0, pct_used=1.0, cost_usd=0.0
@@ -192,7 +192,7 @@ class TestEvaluateThresholds:
         mock_backend.mark_threshold_fired.assert_not_called()
 
     def test_block_fires_warn_first(
-        self, mock_backend: MagicMock, mock_provider: MagicMock
+        self, mock_backend: MagicMock
     ) -> None:
         """Threshold with WARN + BLOCK: callback fires, then raises."""
         callback = MagicMock()
@@ -203,7 +203,7 @@ class TestEvaluateThresholds:
                 make_action(kind="BLOCK"),
             ])],
         )})
-        guard = self._make_guard(policy, mock_backend, mock_provider)
+        guard = self._make_guard(policy, mock_backend)
         key = BudgetKey("session", "test-id")
         state = BudgetState(
             key=key, limit=1000, used=1000, remaining=0, pct_used=1.0, cost_usd=0.0
@@ -213,7 +213,7 @@ class TestEvaluateThresholds:
         callback.assert_called_once()
 
     def test_degrade_swaps_model(
-        self, mock_backend: MagicMock, mock_provider: MagicMock
+        self, mock_backend: MagicMock
     ) -> None:
         """DEGRADE: call_kwargs has new model, original kwargs unchanged."""
         policy = make_policy(dimensions={"session": make_dimension_policy(
@@ -222,7 +222,7 @@ class TestEvaluateThresholds:
                 make_action(kind="DEGRADE", degrade_to="cheap-model"),
             ])],
         )})
-        guard = self._make_guard(policy, mock_backend, mock_provider)
+        guard = self._make_guard(policy, mock_backend)
         key = BudgetKey("session", "test-id")
         state = BudgetState(
             key=key, limit=1000, used=600, remaining=400, pct_used=0.6, cost_usd=0.0
@@ -233,7 +233,7 @@ class TestEvaluateThresholds:
         assert original["model"] == "expensive-model"
 
     def test_degrade_skipped_with_block(
-        self, mock_backend: MagicMock, mock_provider: MagicMock
+        self, mock_backend: MagicMock
     ) -> None:
         """Threshold with BLOCK + DEGRADE: raises, no model swap."""
         policy = make_policy(dimensions={"session": make_dimension_policy(
@@ -243,7 +243,7 @@ class TestEvaluateThresholds:
                 make_action(kind="BLOCK"),
             ])],
         )})
-        guard = self._make_guard(policy, mock_backend, mock_provider)
+        guard = self._make_guard(policy, mock_backend)
         key = BudgetKey("session", "test-id")
         state = BudgetState(
             key=key, limit=1000, used=1000, remaining=0, pct_used=1.0, cost_usd=0.0
@@ -252,7 +252,7 @@ class TestEvaluateThresholds:
             _evaluate_thresholds(guard, [key], {"session": state}, {"model": "x"})
 
     def test_webhook_fires_in_thread(
-        self, mock_backend: MagicMock, mock_provider: MagicMock
+        self, mock_backend: MagicMock
     ) -> None:
         """WEBHOOK: thread started."""
         policy = make_policy(dimensions={"session": make_dimension_policy(
@@ -261,7 +261,7 @@ class TestEvaluateThresholds:
                 make_action(kind="WEBHOOK", webhook_url="http://example.com/hook"),
             ])],
         )})
-        guard = self._make_guard(policy, mock_backend, mock_provider)
+        guard = self._make_guard(policy, mock_backend)
         key = BudgetKey("session", "test-id")
         state = BudgetState(
             key=key, limit=1000, used=600, remaining=400, pct_used=0.6, cost_usd=0.0
@@ -300,6 +300,7 @@ class TestGuardedStream:
             keys=[key],
             original_model="test",
             guard=stub_guard,
+            provider=mock_provider,
         )
         with gs:
             pass
@@ -325,6 +326,7 @@ class TestGuardedStream:
             keys=[key],
             original_model="test",
             guard=stub_guard,
+            provider=mock_provider,
         )
         with gs:
             pass
@@ -340,33 +342,39 @@ class TestGuardedStream:
 class TestGuardedAnthropic:
     """Tests for GuardedAnthropic (mocked anthropic SDK)."""
 
-    def test_messages_property_returns_guarded(self, stub_guard: Guard) -> None:
+    def test_messages_property_returns_guarded(
+        self, stub_guard: Guard, mock_provider: MagicMock
+    ) -> None:
         """The .messages property returns a GuardedMessages, not raw SDK."""
         from tokencap.interceptor.anthropic import GuardedAnthropic, GuardedMessages
 
         mock_client = MagicMock()
         mock_client.__class__ = type("Anthropic", (), {})
-        guarded = GuardedAnthropic(mock_client, stub_guard)
+        guarded = GuardedAnthropic(mock_client, stub_guard, mock_provider)
         assert isinstance(guarded.messages, GuardedMessages)
 
-    def test_getattr_passthrough(self, stub_guard: Guard) -> None:
+    def test_getattr_passthrough(
+        self, stub_guard: Guard, mock_provider: MagicMock
+    ) -> None:
         """Attributes not intercepted delegate to the real client."""
         from tokencap.interceptor.anthropic import GuardedAnthropic
 
         mock_client = MagicMock()
         mock_client.__class__ = type("Anthropic", (), {})
         mock_client.api_key = "sk-test"
-        guarded = GuardedAnthropic(mock_client, stub_guard)
+        guarded = GuardedAnthropic(mock_client, stub_guard, mock_provider)
         assert guarded.api_key == "sk-test"
 
-    def test_with_options_returns_guarded(self, stub_guard: Guard) -> None:
+    def test_with_options_returns_guarded(
+        self, stub_guard: Guard, mock_provider: MagicMock
+    ) -> None:
         """with_options() returns a new GuardedAnthropic."""
         from tokencap.interceptor.anthropic import GuardedAnthropic
 
         mock_client = MagicMock()
         mock_client.__class__ = type("Anthropic", (), {})
         mock_client.with_options.return_value = mock_client
-        guarded = GuardedAnthropic(mock_client, stub_guard)
+        guarded = GuardedAnthropic(mock_client, stub_guard, mock_provider)
         result = guarded.with_options(timeout=30)
         assert isinstance(result, GuardedAnthropic)
 
@@ -374,32 +382,38 @@ class TestGuardedAnthropic:
 class TestGuardedOpenAI:
     """Tests for GuardedOpenAI (mocked openai SDK)."""
 
-    def test_chat_property_returns_guarded(self, stub_guard: Guard) -> None:
+    def test_chat_property_returns_guarded(
+        self, stub_guard: Guard, mock_provider: MagicMock
+    ) -> None:
         """The .chat property returns a GuardedChat."""
         from tokencap.interceptor.openai import GuardedChat, GuardedOpenAI
 
         mock_client = MagicMock()
         mock_client.__class__ = type("OpenAI", (), {})
-        guarded = GuardedOpenAI(mock_client, stub_guard)
+        guarded = GuardedOpenAI(mock_client, stub_guard, mock_provider)
         assert isinstance(guarded.chat, GuardedChat)
 
-    def test_completions_property(self, stub_guard: Guard) -> None:
+    def test_completions_property(
+        self, stub_guard: Guard, mock_provider: MagicMock
+    ) -> None:
         """The .chat.completions property returns a GuardedCompletions."""
         from tokencap.interceptor.openai import GuardedCompletions, GuardedOpenAI
 
         mock_client = MagicMock()
         mock_client.__class__ = type("OpenAI", (), {})
-        guarded = GuardedOpenAI(mock_client, stub_guard)
+        guarded = GuardedOpenAI(mock_client, stub_guard, mock_provider)
         assert isinstance(guarded.chat.completions, GuardedCompletions)
 
-    def test_stream_injects_options(self, stub_guard: Guard) -> None:
+    def test_stream_injects_options(
+        self, stub_guard: Guard, mock_provider: MagicMock
+    ) -> None:
         """stream=True injects stream_options in a copy, not the original."""
         from tokencap.interceptor.openai import GuardedCompletions
 
         mock_completions = MagicMock()
         mock_completions.__class__ = type("Completions", (), {})
         gc = GuardedCompletions(
-            mock_completions, stub_guard, is_async=False
+            mock_completions, stub_guard, mock_provider, is_async=False
         )
         original_kwargs = {"model": "gpt-4o", "stream": True, "messages": []}
         original_copy = dict(original_kwargs)

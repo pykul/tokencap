@@ -1,6 +1,8 @@
 """Guard stub for Phase 2.
 
-Minimal implementation to make the interceptor code importable and testable.
+Stateless config holder and factory. Guard holds policy, identifiers,
+backend, and telemetry. It does not hold provider or current_model —
+those are call-time state that lives on the wrapped client.
 The full Guard with public API, startup message, and wrap() is Phase 3.
 """
 
@@ -24,25 +26,23 @@ class _NoopTelemetry:
 
 
 class Guard:
-    """Minimal Guard stub for Phase 2 interceptor testing.
+    """Stateless config holder and factory for wrapped clients.
 
-    Owns the backend, policy, provider, identifiers, and telemetry references
-    that interceptor/base.py needs. Does not implement the full public API.
+    Owns the backend, policy, identifiers, and telemetry references
+    that interceptor/base.py needs. Does not hold provider or current_model.
+    Provider is created per wrap call and stored on the wrapped client.
     """
 
     def __init__(
         self,
         policy: Policy,
         backend: Backend,
-        provider: Any,
         identifiers: dict[str, str] | None = None,
     ) -> None:
-        """Initialise the Guard stub with policy, backend, and provider."""
+        """Initialise the Guard with policy and backend."""
         self.policy = policy
         self.backend = backend
-        self.provider = provider
         self.telemetry = _NoopTelemetry()
-        self.current_model: str = ""
 
         # Auto-generate UUID identifiers for dimensions not explicitly provided
         provided = identifiers or {}
