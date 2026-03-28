@@ -208,11 +208,14 @@ tokencap.Threshold(
 ## Checking status
 
 ```python
-status = client.get_status()
+client = tokencap.wrap(anthropic.Anthropic(), limit=50_000)
+# [tokencap] session started: session=a3f1c2d4 backend=sqlite:tokencap.db limit=50000 tokens
 
+# ... after some calls ...
+
+status = client.get_status()
 for dim, state in status.dimensions.items():
     print(f"{dim}: {state.used:,} / {state.limit:,} tokens ({state.pct_used:.1%})")
-
 # session: 31,200 / 50,000 tokens (62.4%)
 ```
 
