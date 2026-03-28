@@ -35,8 +35,7 @@ class TestGetStatus:
         )})
         key = BudgetKey("session", "test-id")
         state = BudgetState(
-            key=key, limit=1000, used=400, remaining=600, pct_used=0.4, cost_usd=0.0
-        )
+            key=key, limit=1000, used=400, remaining=600, pct_used=0.4        )
         mock_backend.get_states.return_value = {"session": state}
         # First threshold not fired
         mock_backend.is_threshold_fired.return_value = False
@@ -58,8 +57,7 @@ class TestGetStatus:
         )})
         key = BudgetKey("session", "test-id")
         state = BudgetState(
-            key=key, limit=1000, used=600, remaining=400, pct_used=0.6, cost_usd=0.0
-        )
+            key=key, limit=1000, used=600, remaining=400, pct_used=0.6        )
         mock_backend.get_states.return_value = {"session": state}
         # First threshold fired, second not
         mock_backend.is_threshold_fired.side_effect = lambda k, pct: pct == 0.5
@@ -87,8 +85,7 @@ class TestGetStatus:
         )})
         key = BudgetKey("session", "test-id")
         state = BudgetState(
-            key=key, limit=1000, used=600, remaining=400, pct_used=0.6, cost_usd=0.0
-        )
+            key=key, limit=1000, used=600, remaining=400, pct_used=0.6        )
         mock_backend.get_states.return_value = {"session": state}
         mock_backend.is_threshold_fired.return_value = True
         guard = Guard(policy=policy, identifiers={"session": "test-id"},
@@ -110,11 +107,11 @@ class TestGetStatus:
         })
         session_state = BudgetState(
             key=BudgetKey("session", "s-id"), limit=1000, used=700,
-            remaining=300, pct_used=0.7, cost_usd=0.0,
+            remaining=300, pct_used=0.7,
         )
         tenant_state = BudgetState(
             key=BudgetKey("tenant", "t-id"), limit=5000, used=4400,
-            remaining=600, pct_used=0.88, cost_usd=0.0,
+            remaining=600, pct_used=0.88,
         )
         mock_backend.get_states.return_value = {
             "session": session_state, "tenant": tenant_state,

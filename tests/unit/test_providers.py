@@ -80,29 +80,6 @@ class TestAnthropicProvider:
         provider = AnthropicProvider()
         assert provider.get_model({}) == ""
 
-    def test_token_cost_known_model(self) -> None:
-        """Known model returns non-zero cost."""
-        provider = AnthropicProvider()
-        usage = TokenUsage(input_tokens=1000, output_tokens=1000)
-        cost = provider.token_cost_usd("claude-sonnet-4-6", usage)
-        assert cost > 0.0
-
-    def test_token_cost_versioned_model(self) -> None:
-        """Version-suffixed model strips date and finds base pricing."""
-        provider = AnthropicProvider()
-        usage = TokenUsage(input_tokens=1000, output_tokens=1000)
-        base_cost = provider.token_cost_usd("claude-sonnet-4-6", usage)
-        versioned_cost = provider.token_cost_usd("claude-sonnet-4-6-20251022", usage)
-        assert versioned_cost == base_cost
-        assert versioned_cost > 0.0
-
-    def test_token_cost_unknown_model(self) -> None:
-        """Unknown model returns 0.0."""
-        provider = AnthropicProvider()
-        usage = TokenUsage(input_tokens=1000, output_tokens=1000)
-        assert provider.token_cost_usd("unknown-model", usage) == 0.0
-
-
 class TestOpenAIProvider:
     """Tests for OpenAIProvider."""
 
@@ -149,15 +126,3 @@ class TestOpenAIProvider:
         provider = OpenAIProvider()
         assert provider.get_model({"model": "gpt-4o"}) == "gpt-4o"
 
-    def test_token_cost_known_model(self) -> None:
-        """Known model returns non-zero cost."""
-        provider = OpenAIProvider()
-        usage = TokenUsage(input_tokens=1000, output_tokens=1000)
-        cost = provider.token_cost_usd("gpt-4o", usage)
-        assert cost > 0.0
-
-    def test_token_cost_unknown_model(self) -> None:
-        """Unknown model returns 0.0."""
-        provider = OpenAIProvider()
-        usage = TokenUsage(input_tokens=1000, output_tokens=1000)
-        assert provider.token_cost_usd("unknown-model", usage) == 0.0

@@ -24,7 +24,6 @@ class TestSetLimitAndGetStates:
         assert state.used == 0
         assert state.remaining == 1000
         assert state.pct_used == 0.0
-        assert state.cost_usd == 0.0
 
     def test_set_limit_idempotent(
         self, sqlite_backend: SQLiteBackend, sample_key: BudgetKey

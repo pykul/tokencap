@@ -43,7 +43,7 @@ class TestCall:
             allowed=False,
             states={"session": BudgetState(
                 key=BudgetKey("session", "test-id"),
-                limit=100, used=100, remaining=0, pct_used=1.0, cost_usd=0.0,
+                limit=100, used=100, remaining=0, pct_used=1.0,
             )},
             violated=["session"],
         )
@@ -125,8 +125,7 @@ class TestEvaluateThresholds:
         guard = self._make_guard(policy, mock_backend)
         key = BudgetKey("session", "test-id")
         state = BudgetState(
-            key=key, limit=1000, used=600, remaining=400, pct_used=0.6, cost_usd=0.0
-        )
+            key=key, limit=1000, used=600, remaining=400, pct_used=0.6        )
         _evaluate_thresholds(guard, [key], {"session": state}, {})
         callback.assert_called_once()
 
@@ -144,8 +143,7 @@ class TestEvaluateThresholds:
         guard = self._make_guard(policy, mock_backend)
         key = BudgetKey("session", "test-id")
         state = BudgetState(
-            key=key, limit=1000, used=600, remaining=400, pct_used=0.6, cost_usd=0.0
-        )
+            key=key, limit=1000, used=600, remaining=400, pct_used=0.6        )
         _evaluate_thresholds(guard, [key], {"session": state}, {})
         mock_backend.is_threshold_fired.return_value = True
         _evaluate_thresholds(guard, [key], {"session": state}, {})
@@ -164,8 +162,7 @@ class TestEvaluateThresholds:
         guard = self._make_guard(policy, mock_backend)
         key = BudgetKey("session", "test-id")
         state = BudgetState(
-            key=key, limit=1000, used=1000, remaining=0, pct_used=1.0, cost_usd=0.0
-        )
+            key=key, limit=1000, used=1000, remaining=0, pct_used=1.0        )
         with pytest.raises(BudgetExceededError) as exc_info:
             _evaluate_thresholds(guard, [key], {"session": state}, {})
         assert "session" in exc_info.value.check_result.violated
@@ -183,8 +180,7 @@ class TestEvaluateThresholds:
         guard = self._make_guard(policy, mock_backend)
         key = BudgetKey("session", "test-id")
         state = BudgetState(
-            key=key, limit=1000, used=1000, remaining=0, pct_used=1.0, cost_usd=0.0
-        )
+            key=key, limit=1000, used=1000, remaining=0, pct_used=1.0        )
         with pytest.raises(BudgetExceededError):
             _evaluate_thresholds(guard, [key], {"session": state}, {})
         with pytest.raises(BudgetExceededError):
@@ -207,8 +203,7 @@ class TestEvaluateThresholds:
         guard = self._make_guard(policy, mock_backend)
         key = BudgetKey("session", "test-id")
         state = BudgetState(
-            key=key, limit=1000, used=1000, remaining=0, pct_used=1.0, cost_usd=0.0
-        )
+            key=key, limit=1000, used=1000, remaining=0, pct_used=1.0        )
         with pytest.raises(BudgetExceededError):
             _evaluate_thresholds(guard, [key], {"session": state}, {})
         callback.assert_called_once()
@@ -226,8 +221,7 @@ class TestEvaluateThresholds:
         guard = self._make_guard(policy, mock_backend)
         key = BudgetKey("session", "test-id")
         state = BudgetState(
-            key=key, limit=1000, used=600, remaining=400, pct_used=0.6, cost_usd=0.0
-        )
+            key=key, limit=1000, used=600, remaining=400, pct_used=0.6        )
         original = {"model": "expensive-model"}
         result = _evaluate_thresholds(guard, [key], {"session": state}, original)
         assert result["model"] == "cheap-model"
@@ -247,8 +241,7 @@ class TestEvaluateThresholds:
         guard = self._make_guard(policy, mock_backend)
         key = BudgetKey("session", "test-id")
         state = BudgetState(
-            key=key, limit=1000, used=1000, remaining=0, pct_used=1.0, cost_usd=0.0
-        )
+            key=key, limit=1000, used=1000, remaining=0, pct_used=1.0        )
         with pytest.raises(BudgetExceededError):
             _evaluate_thresholds(guard, [key], {"session": state}, {"model": "x"})
 
@@ -265,8 +258,7 @@ class TestEvaluateThresholds:
         guard = self._make_guard(policy, mock_backend)
         key = BudgetKey("session", "test-id")
         state = BudgetState(
-            key=key, limit=1000, used=600, remaining=400, pct_used=0.6, cost_usd=0.0
-        )
+            key=key, limit=1000, used=600, remaining=400, pct_used=0.6        )
         with patch.object(threading.Thread, "start") as mock_start:
             _evaluate_thresholds(guard, [key], {"session": state}, {})
             mock_start.assert_called_once()

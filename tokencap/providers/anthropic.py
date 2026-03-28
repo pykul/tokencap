@@ -1,29 +1,10 @@
-"""Anthropic provider: token estimation, usage extraction, and pricing."""
+"""Anthropic provider: token estimation and usage extraction."""
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from tokencap.core.types import TokenUsage
-
-# Per-million-token rates: (input_rate, output_rate)
-_PRICING: dict[str, tuple[float, float]] = {
-    "claude-opus-4-6": (15.0, 75.0),
-    "claude-sonnet-4-6": (3.0, 15.0),
-    "claude-haiku-4-5": (0.80, 4.0),
-    "claude-3-opus": (15.0, 75.0),
-    "claude-3-sonnet": (3.0, 15.0),
-    "claude-3-haiku": (0.25, 1.25),
-}
-
-# Matches a trailing date suffix like -20251022
-_VERSION_SUFFIX = re.compile(r"-\d{8}$")
-
-
-def _strip_version(model: str) -> str:
-    """Strip trailing date suffix from versioned model names."""
-    return _VERSION_SUFFIX.sub("", model)
 
 
 class AnthropicProvider:
@@ -68,16 +49,3 @@ class AnthropicProvider:
             return str(request_kwargs.get("model", ""))
         except Exception:
             return ""
-
-    def token_cost_usd(self, model: str, usage: TokenUsage) -> float:
-        """Compute dollar cost for display. Never raises."""
-        try:
-            rates = _PRICING.get(model) or _PRICING.get(_strip_version(model))
-            if rates is None:
-                return 0.0
-            input_rate, output_rate = rates
-            return (
-                usage.input_tokens * input_rate + usage.output_tokens * output_rate
-            ) / 1_000_000
-        except Exception:
-            return 0.0

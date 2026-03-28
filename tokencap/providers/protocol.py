@@ -37,11 +37,3 @@ class Provider(Protocol):
         Returns an empty string on failure. Never raises.
         """
         ...
-
-    def token_cost_usd(self, model: str, usage: TokenUsage) -> float:
-        """Compute dollar cost for display purposes only.
-
-        Never used for enforcement decisions.
-        Returns 0.0 for unknown models. Never raises.
-        """
-        ...

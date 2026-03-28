@@ -134,9 +134,7 @@ Check the final state:
 status = tokencap.get_status()
 for dim, state in status.dimensions.items():
     print(f"{dim}: {state.used:,} / {state.limit:,} tokens ({state.pct_used:.1%})")
-    print(f"  cost so far: ${state.cost_usd:.4f}")
 # session: 51,200 / 50,000 tokens (102.4%)
-#   cost so far: $0.1536
 
 tokencap.teardown()
 ```
@@ -201,10 +199,8 @@ status = tokencap.get_status()
 
 for dim, state in status.dimensions.items():
     print(f"{dim}: {state.used:,} / {state.limit:,} tokens ({state.pct_used:.1%})")
-    print(f"  cost so far: ${state.cost_usd:.4f}")
 
 # session: 31,200 / 50,000 tokens (62.4%)
-#   cost so far: $0.0936
 ```
 
 ---
@@ -218,8 +214,7 @@ mean something different after a pricing update.
 
 tokencap uses token counts directly. You set a limit of 50,000 tokens. That limit
 means exactly the same thing regardless of which model you use, how the provider
-prices it, or whether tokens are cached. Dollar cost is computed for display, but
-it never drives enforcement decisions.
+prices it, or whether tokens are cached.
 
 If you know your task takes roughly 5,000 tokens per call and you want to cap at
 10 calls, you set a limit of 50,000. No conversion needed.
@@ -358,7 +353,6 @@ pip install opentelemetry-api
 | `tokencap.tokens.used` | Counter | provider, model, dimension |
 | `tokencap.tokens.remaining` | Gauge | dimension, identifier |
 | `tokencap.budget.pct_used` | Gauge | dimension, identifier |
-| `tokencap.call.cost_usd` | Histogram | provider, model |
 | `tokencap.policy.action_fired` | Counter | action_kind, dimension |
 
 If `opentelemetry-api` is not installed, all telemetry is a no-op.
@@ -384,9 +378,6 @@ claude-3-sonnet, claude-3-haiku
 
 **OpenAI:** gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-4, gpt-3.5-turbo, o1, o1-mini,
 o3, o3-mini, o4-mini
-
-Version-suffixed model names (e.g. `claude-sonnet-4-6-20251022`) fall back to
-their base model pricing automatically.
 
 ---
 
@@ -438,7 +429,6 @@ state.limit                  # int, tokens
 state.used                   # int, tokens
 state.remaining              # int, tokens
 state.pct_used               # float, e.g. 0.624
-state.cost_usd               # float, display only
 ```
 
 ### Exceptions

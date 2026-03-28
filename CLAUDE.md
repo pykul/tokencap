@@ -29,8 +29,8 @@ metadata only. If you find yourself writing code that stores, logs, or inspects
 the content of messages or completions, stop. That is not what this library does.
 
 **Never make enforcement decisions based on dollars.** All enforcement logic
-uses token counts. Dollar cost is computed for display only (StatusResponse,
-OTEL metrics). Never check a dollar threshold. See D-001.
+uses token counts. Dollar cost is not tracked — tokencap does not maintain
+pricing tables. See D-001 and D-045.
 
 **Never monkey-patch SDK modules globally.** tokencap wraps client objects.
 It does not modify `anthropic.Anthropic`, `openai.OpenAI`, or any other class

@@ -204,7 +204,6 @@ class BudgetState:
     used: int         # tokens consumed so far in this period
     remaining: int    # tokens left (may be negative after force_increment)
     pct_used: float   # used / limit: may exceed 1.0 after reconciliation
-    cost_usd: float   # display-only derived value: never stored, never enforced
 
 
 @dataclass
@@ -469,13 +468,6 @@ class Provider(Protocol):
         """
         ...
 
-    def token_cost_usd(self, model: str, usage: TokenUsage) -> float:
-        """
-        Compute dollar cost for display purposes only.
-        Never used for enforcement decisions.
-        Returns 0.0 for unknown models. Never raises.
-        """
-        ...
 ```
 
 ### AnthropicProvider (providers/anthropic.py)
@@ -487,13 +479,6 @@ class Provider(Protocol):
   Then reads `response.usage.input_tokens`, `response.usage.output_tokens`,
   `response.usage.cache_read_input_tokens`,
   `response.usage.cache_creation_input_tokens`. All fields default to 0 if absent.
-- `token_cost_usd`: pricing dict keyed by model string. Version-suffixed models
-  (e.g. `claude-sonnet-4-6-20251022`) strip the date suffix and fall back to the
-  base model. Returns 0.0 for unknown models.
-
-Pricing table covers: `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`,
-`claude-3-opus`, `claude-3-sonnet`, `claude-3-haiku`. Maintained manually in the file.
-
 ### OpenAIProvider (providers/openai.py)
 
 - `estimate_tokens`: uses `tiktoken.encoding_for_model(model)` if tiktoken is
@@ -502,9 +487,6 @@ Pricing table covers: `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`
   wrapper from `with_raw_response`), calls it first to get the parsed completion.
   Then reads `response.usage.prompt_tokens` and
   `response.usage.completion_tokens`. Defaults to 0 if absent.
-- `token_cost_usd`: same pattern as Anthropic. Covers `gpt-4o`, `gpt-4o-mini`,
-  `gpt-4-turbo`, `gpt-4`, `gpt-3.5-turbo`, `o1`, `o1-mini`, `o3`, `o3-mini`,
-  `o4-mini`.
 
 ---
 
@@ -1445,7 +1427,6 @@ Metrics emitted after each post-call reconciliation:
 | `tokencap.tokens.used` | Counter | `provider`, `model`, `dimension` |
 | `tokencap.tokens.remaining` | Gauge | `dimension`, `identifier` |
 | `tokencap.budget.pct_used` | Gauge | `dimension`, `identifier` |
-| `tokencap.call.cost_usd` | Histogram | `provider`, `model` |
 | `tokencap.policy.action_fired` | Counter | `action_kind`, `dimension` |
 
 Span attributes per call:
