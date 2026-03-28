@@ -65,7 +65,7 @@ class GuardedAnthropic:
 
     def __init__(
         self,
-        client: Any,
+        client: anthropic.Anthropic,
         guard: Guard,
     ) -> None:
         """Initialise with the real client and guard."""
@@ -92,14 +92,14 @@ class GuardedAnthropic:
     def with_raw_response(self) -> GuardedAnthropic:
         """Return a new GuardedAnthropic wrapping the raw-response client."""
         return GuardedAnthropic(
-            self._client.with_raw_response, self._guard
+            self._client.with_raw_response, self._guard  # type: ignore[arg-type]
         )
 
     @property
     def with_streaming_response(self) -> GuardedAnthropic:
         """Return a new GuardedAnthropic wrapping the streaming-response client."""
         return GuardedAnthropic(
-            self._client.with_streaming_response, self._guard
+            self._client.with_streaming_response, self._guard  # type: ignore[arg-type]
         )
 
     def __getattr__(self, name: str) -> Any:
