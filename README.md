@@ -421,7 +421,7 @@ For distributed mode across machines: `pip install redis`
 
 For OTEL metrics and traces: `pip install opentelemetry-api`
 
-Requires Python 3.9+.
+Requires Python 3.10+.
 
 ---
 
@@ -440,6 +440,8 @@ it never drives enforcement decisions.
 This also makes limits easy to reason about. If you know your task takes roughly
 5,000 tokens per call and you want to cap at 10 calls, you set a limit of 50,000.
 No conversion needed.
+
+---
 
 ---
 

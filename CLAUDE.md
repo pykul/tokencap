@@ -63,7 +63,11 @@ reporting completion of any task. Fix all warnings.
 **Every public function and class must have a docstring.** Single-line is fine
 for obvious cases. No docstring-free public API.
 
-See Testing Rules section for the full test policy.
+**Tests must not make real API calls.** Unit tests use mocks. Integration tests
+in `tests/integration/` are the only place real API calls are allowed, and they
+must be skipped when the relevant environment variable is not set:
+- `ANTHROPIC_API_KEY` for Anthropic tests
+- `OPENAI_API_KEY` for OpenAI tests
 
 **The concurrent write test is the atomicity acceptance test.** For both
 SQLiteBackend and RedisBackend: 10 threads, 100 increments of 1 token each,

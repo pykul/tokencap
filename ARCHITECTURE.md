@@ -171,7 +171,7 @@ tokencap/
     │   ├── test_providers.py
     │   └── test_interceptor.py
     ├── integration/
-    │   └── test_full_pipeline.py  # HTTP layer mocked with pytest-httpx, always runs
+    │   └── test_full_pipeline.py  # Skipped in CI without API keys
     └── conftest.py                # Shared fixtures: mock providers, mock backends
 ```
 
@@ -1438,7 +1438,7 @@ or from multiple threads concurrently.
 ## Dependencies
 
 ### Required (always installed)
-None. Zero required dependencies beyond Python 3.9+.
+None. Zero required dependencies beyond Python 3.10+.
 
 ### Optional extras
 

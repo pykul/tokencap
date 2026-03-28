@@ -170,16 +170,15 @@ monitoring/observation rather than enforcement.
 
 ---
 
-## D-012: Python 3.9+ minimum
+## D-012: Python 3.10+ minimum
 
-**Decision:** Minimum supported Python version is 3.9.
+**Decision:** Minimum supported Python version is 3.10.
 
-**Why:** 3.9 is the oldest Python version with broad ecosystem support for the
-libraries tokencap's users are likely to have installed (anthropic, openai).
-The type annotation concern that previously made 3.9 problematic is resolved by
-`from __future__ import annotations` at the top of every module, which makes
-`X | Y`, `list[X]`, and `dict[X, Y]` syntax valid as string annotations on 3.9+.
-No runtime feature from 3.10+ is used in the codebase.
+**Why:** 3.10 introduced `match` statements (not used but available), improved type
+union syntax (`X | Y` instead of `Union[X, Y]`), and structural pattern matching.
+More practically: 3.10 is the oldest Python version still receiving security updates
+as of 2026. Supporting 3.9 or earlier would require avoiding several clean type
+annotation patterns.
 
 ---
 
