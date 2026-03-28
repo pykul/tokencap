@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: lint test test-live build publish
+.PHONY: lint test test-live build publish redis-up redis-down
 
 lint:
 	ruff check tokencap tests
@@ -17,3 +17,9 @@ build:
 
 publish:
 	$(PYTHON) -m twine upload dist/*
+
+redis-up:
+	docker compose -f docker/docker-compose.redis.yml up -d
+
+redis-down:
+	docker compose -f docker/docker-compose.redis.yml down

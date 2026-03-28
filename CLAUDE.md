@@ -279,6 +279,11 @@ when credentials are missing.
 **Live tests run via make test-live.** They never block CI. They are not
 part of make test.
 
+**Redis live tests require a running Redis instance.** Run `make redis-up`
+before `make test-live` to start a local Redis container. Tests read
+`REDIS_URL` from the environment and default to `redis://localhost:6379`
+if not set.
+
 **Test file naming mirrors the source tree 1:1.** tests/unit/test_backends.py
 tests tokencap/backends/. tests/unit/test_interceptor.py tests
 tokencap/interceptor/.

@@ -58,8 +58,21 @@ class Guard:
         """
         self.policy = policy
         self.backend: Backend = backend or SQLiteBackend("tokencap.db")
-        self.telemetry = _NoopTelemetry()
         self._otel_enabled = otel_enabled
+
+        # Wire telemetry: real OtelEmitter if enabled and available, else no-op
+        if otel_enabled:
+            try:
+                from tokencap.telemetry.otel import OTEL_AVAILABLE, OtelEmitter
+
+                if OTEL_AVAILABLE:
+                    self.telemetry: _NoopTelemetry | Any = OtelEmitter()
+                else:
+                    self.telemetry = _NoopTelemetry()
+            except Exception:
+                self.telemetry = _NoopTelemetry()
+        else:
+            self.telemetry = _NoopTelemetry()
 
         # Auto-generate UUID identifiers for dimensions not explicitly provided
         provided = identifiers or {}

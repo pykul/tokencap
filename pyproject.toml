@@ -43,6 +43,13 @@ packages = ["tokencap"]
 strict = true
 python_version = "3.9"
 
+[[tool.mypy.overrides]]
+module = [
+    "tokencap.backends.redis",
+    "tokencap.telemetry.otel",
+]
+disable_error_code = ["import-not-found"]
+
 [tool.ruff]
 target-version = "py39"
 line-length = 99
