@@ -344,6 +344,31 @@ client = tokencap.wrap(anthropic.Anthropic())
 
 ---
 
+## Development
+
+### Running tests
+
+```bash
+pip install -e ".[dev]"
+pip install redis opentelemetry-api
+make test          # unit + integration, no external services needed
+make redis-up      # start local Redis container
+make test-live     # live tests (mock providers, real Redis)
+make redis-down    # stop Redis container
+```
+
+### Lint
+
+```bash
+make lint          # ruff + mypy --strict
+```
+
+### Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
+
+---
+
 ## OTEL integration
 
 tokencap emits OpenTelemetry metrics after every call if `opentelemetry-api` is
