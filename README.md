@@ -12,7 +12,9 @@ pip install tokencap
 
 ## What it is
 
-tokencap is a Python library that gives your AI agents a token budget.
+tokencap is a Python library that enables you to track token usage and enforce
+budgets across your AI agents, giving you full visibility into what each session,
+tenant, or pipeline run is spending.
 
 Wrap your Anthropic or OpenAI client, or drop one line at the top of your
 script if you use LangChain, CrewAI, or any other agent framework, and
