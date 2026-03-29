@@ -30,8 +30,8 @@ session mid-flight.
 
 tokencap gives you enforcement in your code. Set a token budget per session,
 per tenant, per pipeline run, or across any dimension that matters. When the
-budget is hit, the call is blocked before it reaches the provider — not after
-the tokens are gone.
+budget is hit, the call is blocked before it reaches the provider, before the
+tokens are gone.
 
 ---
 
@@ -45,8 +45,8 @@ export OPENAI_API_KEY=sk-...          # OpenAI
 ```
 
 tokencap works in two modes. Use `wrap()` when you construct SDK clients
-directly. Use `patch()` when an agent framework constructs clients internally
-— it intercepts every client created anywhere in the process automatically.
+directly. Use `patch()` when an agent framework constructs clients internally.
+It intercepts every client created anywhere in the process automatically.
 
 ### Direct client wrapping
 
@@ -367,8 +367,8 @@ prices it, or whether tokens are cached.
 
 Dollar cost tracking is deliberately absent. Provider pricing changes without
 notice and no machine-readable pricing API exists. A dollar figure derived from
-a stale table is worse than no figure at all. Token counts are always accurate
-— they come directly from the provider response.
+a stale table is worse than no figure at all. Token counts are always accurate.
+They come directly from the provider response.
 
 If you know your task takes roughly 5,000 tokens per call and you want to cap at
 10 calls, you set a limit of 50,000. No conversion needed.
@@ -489,6 +489,13 @@ Across machines, switch to Redis. The API is identical:
 from tokencap.backends.redis import RedisBackend
 
 shared = RedisBackend("redis://redis-host:6379")
+```
+
+In production, read the URL from an environment variable:
+
+```python
+import os
+shared = RedisBackend(os.environ["REDIS_URL"])
 ```
 
 ```bash

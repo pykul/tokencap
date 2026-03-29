@@ -24,7 +24,7 @@ A single install gives you everything needed to run tests and lint.
 
 **Provider API keys** are the standard env vars for each SDK. Set them in your
 shell or a `.env` file. When absent, the live provider tests run in mock
-fallback mode automatically — no credentials are needed for `make test` or
+fallback mode automatically. No credentials are needed for `make test` or
 `make test-live`.
 
 ```bash
@@ -36,7 +36,7 @@ export OPENAI_API_KEY=sk-...
 applies to both local development and production use of `RedisBackend`.
 
 For local development, `make redis-up` starts a container at the default
-address — no configuration needed:
+address. No configuration needed:
 
 ```bash
 make redis-up
