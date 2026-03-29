@@ -20,6 +20,35 @@ The `dev` extra includes both provider SDKs (anthropic, openai, tiktoken),
 redis, opentelemetry-api, and all dev tools (pytest, pytest-httpx, mypy, ruff).
 A single install gives you everything needed to run tests and lint.
 
+## Environment variables
+
+**Provider API keys** are the standard env vars for each SDK. Set them in your
+shell or a `.env` file. When absent, the live provider tests run in mock
+fallback mode automatically — no credentials are needed for `make test` or
+`make test-live`.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...
+```
+
+**`REDIS_URL`** controls which Redis instance tokencap connects to. This
+applies to both local development and production use of `RedisBackend`.
+
+For local development, `make redis-up` starts a container at the default
+address — no configuration needed:
+
+```bash
+make redis-up
+# REDIS_URL defaults to redis://localhost:6379
+```
+
+For production or a remote Redis instance:
+
+```bash
+export REDIS_URL=redis://your-redis-host:6379
+```
+
 ## Running tests
 
 There are three test tiers:
