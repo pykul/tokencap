@@ -7,6 +7,7 @@ import sys
 from unittest.mock import MagicMock
 
 from tests.conftest import make_action, make_dimension_policy, make_policy, make_threshold
+from tokencap.core.enums import ActionKind
 from tokencap.core.guard import Guard
 from tokencap.status.api import StatusResponse
 
@@ -94,7 +95,9 @@ class TestGuardConstruction:
         policy = make_policy(dimensions={
             "session": make_dimension_policy(
                 limit=5000,
-                thresholds=[make_threshold(at_pct=1.0, actions=[make_action(kind="BLOCK")])],
+                thresholds=[make_threshold(
+                    at_pct=1.0, actions=[make_action(kind=ActionKind.BLOCK)],
+                )],
             ),
         })
         buf = io.StringIO()
@@ -191,7 +194,7 @@ class TestWrapLimitEquivalence:
                         thresholds=[
                             tokencap.Threshold(
                                 at_pct=1.0,
-                                actions=[tokencap.Action(kind="BLOCK")],
+                                actions=[tokencap.Action(kind=tokencap.ActionKind.BLOCK)],
                             ),
                         ],
                     ),

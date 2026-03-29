@@ -18,6 +18,7 @@ from tests.conftest import (
     openai_response,
 )
 from tokencap.backends.sqlite import SQLiteBackend
+from tokencap.core.enums import ActionKind
 from tokencap.core.exceptions import BudgetExceededError
 from tokencap.core.guard import Guard
 from tokencap.core.types import BudgetKey
@@ -68,7 +69,7 @@ class TestOpenAIIntegration:
             "session": make_dimension_policy(
                 limit=1,
                 thresholds=[make_threshold(
-                    at_pct=1.0, actions=[make_action(kind="BLOCK")],
+                    at_pct=1.0, actions=[make_action(kind=ActionKind.BLOCK)],
                 )],
             ),
         })

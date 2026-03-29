@@ -24,6 +24,7 @@ from tests.conftest import (
     make_threshold,
     openai_response,
 )
+from tokencap.core.enums import ActionKind
 from tokencap.core.exceptions import BudgetExceededError, ConfigurationError
 
 
@@ -125,7 +126,7 @@ class TestActions:
             "session": make_dimension_policy(
                 limit=10,
                 thresholds=[make_threshold(at_pct=0.5, actions=[
-                    make_action(kind="WARN", callback=on_warn),
+                    make_action(kind=ActionKind.WARN, callback=on_warn),
                 ])],
             ),
         })
@@ -146,7 +147,7 @@ class TestActions:
             "session": make_dimension_policy(
                 limit=1,
                 thresholds=[make_threshold(
-                    at_pct=1.0, actions=[make_action(kind="BLOCK")],
+                    at_pct=1.0, actions=[make_action(kind=ActionKind.BLOCK)],
                 )],
             ),
         })
@@ -170,7 +171,7 @@ class TestActions:
             "session": make_dimension_policy(
                 limit=10,
                 thresholds=[make_threshold(at_pct=0.5, actions=[
-                    make_action(kind="DEGRADE", degrade_to="claude-haiku-4-5"),
+                    make_action(kind=ActionKind.DEGRADE, degrade_to="claude-haiku-4-5"),
                 ])],
             ),
         })
@@ -193,7 +194,7 @@ class TestActions:
             "session": make_dimension_policy(
                 limit=10,
                 thresholds=[make_threshold(at_pct=0.5, actions=[
-                    make_action(kind="WEBHOOK", webhook_url="http://example.com/hook"),
+                    make_action(kind=ActionKind.WEBHOOK, webhook_url="http://example.com/hook"),
                 ])],
             ),
         })
@@ -217,7 +218,7 @@ class TestMultiDimension:
             "session": make_dimension_policy(
                 limit=1,
                 thresholds=[make_threshold(
-                    at_pct=1.0, actions=[make_action(kind="BLOCK")],
+                    at_pct=1.0, actions=[make_action(kind=ActionKind.BLOCK)],
                 )],
             ),
             "tenant": make_dimension_policy(limit=100000),
@@ -325,7 +326,7 @@ class TestWebhookHTTPPost:
             "session": make_dimension_policy(
                 limit=10,
                 thresholds=[make_threshold(at_pct=0.5, actions=[
-                    make_action(kind="WEBHOOK", webhook_url="http://test-hook.example.com/alert"),
+                    make_action(kind=ActionKind.WEBHOOK, webhook_url="http://test-hook.example.com/alert"),
                 ])],
             ),
         })
@@ -353,7 +354,7 @@ class TestWebhookHTTPPost:
             "session": make_dimension_policy(
                 limit=100,
                 thresholds=[make_threshold(at_pct=0.1, actions=[
-                    make_action(kind="WEBHOOK", webhook_url="http://test-hook.example.com/alert"),
+                    make_action(kind=ActionKind.WEBHOOK, webhook_url="http://test-hook.example.com/alert"),
                 ])],
             ),
         })

@@ -34,7 +34,8 @@ pricing tables. See D-001 and D-045.
 
 **Never monkey-patch SDK modules globally.** tokencap wraps client objects.
 The only exception is `tokencap.patch()`, which is an explicit opt-in function
-that the developer calls by name. `unpatch()` fully reverses the effect.
+that the developer calls by name. The `providers` parameter controls which SDKs
+are patched (default: both). `unpatch()` fully reverses the effect.
 See D-004 and D-050.
 
 **Never block the call path in WEBHOOK.** Webhook HTTP posts run in a background
@@ -151,9 +152,11 @@ The reconciliation step must always succeed regardless of budget state. If you f
 yourself calling `check_and_increment` in the post-call path, stop. You are using
 the wrong method. See D-013.
 
-**Never use bare str for enum-like fields.** Use `Literal[...]` so mypy catches
-typos at the call site. `reset_every`, `action.kind`, and any other field with a
-fixed set of valid string values must use `Literal`. See D-017.
+**Never use bare str for enum-like fields.** Use `str`-based enums (`ActionKind`,
+`Provider`, `ResetPeriod`) so IDEs provide autocomplete and mypy catches type
+mismatches. All enum-like public API fields must use the corresponding enum type.
+Raw strings are accepted for backwards compatibility via `__post_init__` coercion.
+See D-017 and D-051.
 
 **Validate invariants in __post_init__, not at call time.** If a dataclass field
 has constraints (range, non-empty, etc.), check them in `__post_init__` and raise

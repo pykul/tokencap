@@ -850,3 +850,32 @@ differences from invisible global patching:
 - Only `__init__` is patched, not `messages.create` or other methods
 - `wrap()` remains the recommended approach for direct SDK usage
 - `patch()` prints a startup message showing what was patched
+
+The `providers` parameter (default `None`, meaning both `["anthropic", "openai"]`)
+lets the developer patch only the SDK they need. This is useful when only one
+SDK is installed or the agent framework uses only one provider. Unknown provider
+names and empty lists raise `ConfigurationError`. `unpatch()` only restores
+providers that were actually patched.
+
+---
+
+## D-051: str-based enums for all fixed-value public API parameters
+
+**Decision:** All public API parameters with a fixed set of valid string values
+use `str`-based enums: `ActionKind`, `Provider`, `ResetPeriod`. All three are
+exported from `tokencap` directly and defined in `tokencap/core/enums.py`.
+
+**Why:** IDE autocomplete and type checker support are the primary motivations.
+With `Literal["WARN", "BLOCK", "DEGRADE", "WEBHOOK"]`, IDEs show no
+autocomplete suggestions and typos like `"WRAN"` are only caught by mypy, not
+at runtime. With `ActionKind(str, Enum)`, IDEs show the valid values,
+`ActionKind("WRAN")` raises `ValueError` at runtime, and mypy catches type
+mismatches at analysis time.
+
+All three enums inherit from `str` so that existing code continues to work
+unchanged: `ActionKind.WARN == "WARN"` is `True`, and `Action(kind="WARN")`
+is coerced to `Action(kind=ActionKind.WARN)` in `__post_init__`.
+
+This decision supersedes D-017 ("use `Literal[...]` for enum-like fields").
+`Literal` was the right choice before the enums existed. Now that proper enums
+are available, they are the recommended approach.

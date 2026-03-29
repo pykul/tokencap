@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 
 from tests.conftest import make_action, make_dimension_policy, make_policy, make_threshold
-from tokencap.core.policy import Policy
+from tokencap.core.enums import ActionKind, ResetPeriod
+from tokencap.core.policy import Action, Policy
 
 
 class TestThreshold:
@@ -39,9 +40,12 @@ class TestDimensionPolicy:
         """Thresholds are sorted by at_pct on construction."""
         dp = make_dimension_policy(
             thresholds=[
-                make_threshold(at_pct=1.0, actions=[make_action(kind="BLOCK")]),
-                make_threshold(at_pct=0.5, actions=[make_action(kind="WARN")]),
-                make_threshold(at_pct=0.8, actions=[make_action(kind="DEGRADE", degrade_to="x")]),
+                make_threshold(at_pct=1.0, actions=[make_action(kind=ActionKind.BLOCK)]),
+                make_threshold(at_pct=0.5, actions=[make_action(kind=ActionKind.WARN)]),
+                make_threshold(
+                    at_pct=0.8,
+                    actions=[make_action(kind=ActionKind.DEGRADE, degrade_to="x")],
+                ),
             ]
         )
         pcts = [t.at_pct for t in dp.thresholds]
@@ -72,9 +76,19 @@ class TestAction:
 
     def test_valid_kinds(self) -> None:
         """All valid kinds construct without error."""
-        for kind in ("WARN", "BLOCK", "DEGRADE", "WEBHOOK"):
-            a = make_action(kind=kind)  # type: ignore[arg-type]
+        for kind in ActionKind:
+            a = make_action(kind=kind)
             assert a.kind == kind
+
+    def test_action_kind_string_equality(self) -> None:
+        """ActionKind enum values compare equal to their string equivalents."""
+        assert ActionKind.WARN == "WARN"
+        assert ActionKind.BLOCK == "BLOCK"
+
+    def test_action_string_coerced_to_enum(self) -> None:
+        """Action.__post_init__ coerces plain string kind to ActionKind."""
+        a = Action(kind="WARN")  # type: ignore[arg-type]
+        assert a.kind is ActionKind.WARN
 
     def test_optional_fields_default_none(self) -> None:
         """Optional fields default to None."""
@@ -82,3 +96,11 @@ class TestAction:
         assert a.webhook_url is None
         assert a.degrade_to is None
         assert a.callback is None
+
+
+class TestResetPeriod:
+    """Tests for ResetPeriod enum."""
+
+    def test_reset_period_string_equality(self) -> None:
+        """ResetPeriod enum values compare equal to their string equivalents."""
+        assert ResetPeriod.DAY == "day"
