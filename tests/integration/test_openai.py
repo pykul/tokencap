@@ -111,3 +111,34 @@ class TestOpenAIIntegration:
         assert isinstance(result, GuardedStream)
         assert original_kwargs == original_copy
         backend.close()
+
+
+class TestOpenAIAsyncIntegration:
+    """Async integration tests for OpenAI via tokencap drop-in API."""
+
+    @pytest.mark.asyncio
+    async def test_async_wrap_tracks_tokens(
+        self,
+        tmp_path: object,
+        httpx_mock: object,  # type: ignore[type-arg]
+    ) -> None:
+        """wrap(AsyncOpenAI) + await create() tracks tokens end-to-end."""
+        import tokencap
+
+        httpx_mock.add_response(  # type: ignore[union-attr]
+            json=openai_response(prompt_tokens=20, completion_tokens=10),
+        )
+        try:
+            client = tokencap.wrap(
+                openai.AsyncOpenAI(api_key="sk-fake-key"),
+                limit=10_000, quiet=True,
+            )
+            response = await client.chat.completions.create(
+                model="gpt-4o", max_tokens=100,
+                messages=[{"role": "user", "content": "Hi"}],
+            )
+            assert response.choices[0].message.content
+            status = client.get_status()
+            assert status.dimensions["session"].used > 0
+        finally:
+            tokencap.teardown()

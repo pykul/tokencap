@@ -132,6 +132,32 @@ class TestPatchProviders:
         client = anthropic.Anthropic(api_key="sk-fake")
         assert isinstance(client, GuardedAnthropic)
 
+    def test_patch_openai_only_message_shows_openai(self) -> None:
+        """providers=[Provider.OPENAI] startup message shows openai, not anthropic."""
+        buf = io.StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = buf
+        try:
+            tokencap.patch(providers=[Provider.OPENAI])
+        finally:
+            sys.stdout = old_stdout
+        output = buf.getvalue()
+        assert "openai" in output
+        assert "anthropic" not in output.split("\n")[0]
+
+    def test_patch_anthropic_only_message_shows_anthropic(self) -> None:
+        """providers=[Provider.ANTHROPIC] startup message shows anthropic, not openai."""
+        buf = io.StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = buf
+        try:
+            tokencap.patch(providers=[Provider.ANTHROPIC])
+        finally:
+            sys.stdout = old_stdout
+        output = buf.getvalue()
+        assert "anthropic" in output
+        assert "openai" not in output.split("\n")[0]
+
 
 class TestUnpatch:
     """Tests for tokencap.unpatch()."""
