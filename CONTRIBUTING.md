@@ -76,6 +76,21 @@ make redis-down    # stop Redis container
 `redis://localhost:6379` if not set. When Redis is not reachable, the test
 falls back to an in-memory mock and still exercises the full code path.
 
+## Smoke test
+
+`scripts/smoke_test.py` runs every tokencap feature against real Anthropic and
+OpenAI APIs. It is the human verification step before a release. It is not part
+of CI.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...
+python scripts/smoke_test.py
+```
+
+Uses the cheapest available models with minimal tokens (~$0.001 total). Requires
+real API keys — no mock fallback.
+
 ## Running lint
 
 ```bash

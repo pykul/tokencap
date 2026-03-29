@@ -94,7 +94,18 @@ def _evaluate_thresholds(
 
 
 def _fire_webhook(url: str, status: Any) -> None:
-    """Fire a webhook POST in a background daemon thread. Never blocks."""
+    """Fire a webhook POST in a background daemon thread. Never blocks.
+
+    Only http:// and https:// URLs are accepted. Other schemes (file://, ftp://)
+    are rejected with a WARNING log to prevent SSRF.
+    """
+    if not url.startswith(("http://", "https://")):
+        logging.getLogger("tokencap").warning(
+            "tokencap: WEBHOOK url %r is not http:// or https://. Skipping webhook.",
+            url,
+        )
+        return
+
     def post() -> None:
         try:
             data = json.dumps({"status": str(status)}).encode()

@@ -276,6 +276,25 @@ class TestEvaluateThresholds:
             _evaluate_thresholds(guard, [key], {"session": state}, {})
             mock_start.assert_called_once()
 
+    def test_webhook_invalid_scheme_skipped(
+        self, mock_backend: MagicMock
+    ) -> None:
+        """WEBHOOK: file:// URL logs WARNING and does not call urlopen."""
+        policy = make_policy(dimensions={"session": make_dimension_policy(
+            limit=1000,
+            thresholds=[make_threshold(at_pct=0.5, actions=[
+                make_action(kind=ActionKind.WEBHOOK, webhook_url="file:///etc/passwd"),
+            ])],
+        )})
+        guard = self._make_guard(policy, mock_backend)
+        key = BudgetKey("session", "test-id")
+        state = BudgetState(
+            key=key, limit=1000, used=600, remaining=400, pct_used=0.6,
+        )
+        with patch.object(threading.Thread, "start") as mock_start:
+            _evaluate_thresholds(guard, [key], {"session": state}, {})
+            mock_start.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # GuardedStream tests
