@@ -5,6 +5,8 @@ Public API surface. All public symbols are listed in __all__.
 
 from __future__ import annotations
 
+__version__ = "0.1.0"
+
 import logging
 import sys
 import threading

@@ -13,10 +13,12 @@ test-live:
 	$(PYTHON) -m pytest tests/live -v
 
 build:
+	rm -rf dist/
 	$(PYTHON) -m build
 
 publish:
-	$(PYTHON) -m twine upload dist/*
+	$(PYTHON) -m build
+	twine upload dist/*
 
 redis-up:
 	docker compose -f docker/docker-compose.redis.yml up -d

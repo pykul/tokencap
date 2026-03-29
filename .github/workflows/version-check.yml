@@ -1,0 +1,34 @@
+name: Version Check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check version bump for release PRs
+        run: |
+          PR_VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          git fetch origin main
+          MAIN_VERSION=$(git show origin/main:pyproject.toml | grep '^version' | head -1 | sed 's/.*"\(.*\)".*/\1/')
+
+          echo "PR version:   $PR_VERSION"
+          echo "Main version: $MAIN_VERSION"
+
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_TITLE_LOWER=$(echo "$PR_TITLE" | tr '[:upper:]' '[:lower:]')
+
+          if [ "$PR_VERSION" = "$MAIN_VERSION" ]; then
+            if echo "$PR_TITLE_LOWER" | grep -qE 'release|publish'; then
+              echo "::error::Version $PR_VERSION is the same as main. Bump the version in pyproject.toml before publishing."
+              exit 1
+            fi
+          fi
+
+          echo "Version check passed."

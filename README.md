@@ -1,6 +1,9 @@
 # tokencap
 
 [![CI](https://github.com/pykul/tokencap/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pykul/tokencap/actions/workflows/ci.yml)
+[![PyPI version](https://badge.fury.io/py/tokencap.svg)](https://badge.fury.io/py/tokencap)
+[![Python](https://img.shields.io/pypi/pyversions/tokencap.svg)](https://pypi.org/project/tokencap/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 **Token usage visibility and budget enforcement for AI agents. Works out of the box. Scales to Redis when you need it.**
 
