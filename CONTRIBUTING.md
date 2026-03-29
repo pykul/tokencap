@@ -148,30 +148,21 @@ git commit -m "bump version to X.Y.Z"
 git push origin main
 ```
 
-4. Run the pre-release check locally:
+4. Run the release command:
 
 ```bash
-make release
+make release VERSION=X.Y.Z
 ```
 
-   This runs lint, tests, builds the wheel, and runs twine check. It does NOT
-   publish anything. Fix any issues before continuing.
+   This runs lint, tests, builds the wheel, runs twine check, creates the tag,
+   and pushes it. The publish GitHub Action fires automatically when the tag is
+   pushed.
 
-5. Tag main and push the tag:
+   If `pyproject.toml` version does not match VERSION, the command fails before
+   doing anything. Bump the version first.
 
-```bash
-git tag vX.Y.Z
-git push origin vX.Y.Z
-```
-
-6. The publish GitHub Action fires automatically. It builds the wheel and sdist
-   and uploads to PyPI via OIDC. No credentials needed.
-
-7. Verify the new version is live: https://pypi.org/project/tokencap/
-
-That is the entire process. No manual twine. No browser release page required
-(though you can create one at https://github.com/pykul/tokencap/releases if you
-want release notes on GitHub).
+5. Monitor the publish workflow:
+   https://github.com/pykul/tokencap/actions/workflows/publish.yml
 
 ### Version numbering
 
