@@ -1422,7 +1422,7 @@ Stdout output can be suppressed with `quiet=True` on `wrap()` or `init()`.
 | `BudgetExceededError` | Raised on BLOCK, carries full `CheckResult` |
 | `BackendError` | Raised on unrecoverable storage failures |
 | `StatusResponse` | Returned by `get_status()`. Carries per-dimension `BudgetState`, active policy name, and next unfired threshold. |
-| `patch(limit=None, policy=None, quiet=False)` | Monkey-patch SDK constructors for framework integration. See D-050. |
+| `patch(limit=None, policy=None, quiet=False, providers=None)` | Monkey-patch SDK constructors for framework integration. `providers` defaults to `["anthropic", "openai"]`; pass a subset to patch only specific SDKs. See D-050. |
 | `unpatch()` | Reverse all monkey-patches applied by `patch()` |
 
 All other symbols are internal and may change without notice.
@@ -1453,6 +1453,10 @@ constructed before `patch()` is called are not affected. Clients constructed
 after `patch()` is called are automatically wrapped.
 
 `patch()` accepts the same `limit=` and `policy=` parameters as `wrap()`.
+An optional `providers=` parameter controls which SDKs are patched. The default
+`None` patches both `["anthropic", "openai"]`. Pass `providers=["anthropic"]`
+or `providers=["openai"]` to patch only one. Unknown names or an empty list
+raise `ConfigurationError`. `unpatch()` only restores what was actually patched.
 
 #### Trade-offs vs wrap()
 

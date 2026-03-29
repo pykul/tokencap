@@ -79,6 +79,48 @@ class TestPatch:
         assert "anthropic" in output
 
 
+class TestPatchProviders:
+    """Tests for the providers parameter."""
+
+    def test_patch_anthropic_only(self) -> None:
+        """providers=["anthropic"] only patches Anthropic, not OpenAI."""
+        tokencap.patch(quiet=True, providers=["anthropic"])
+        client = anthropic.Anthropic(api_key="sk-fake")
+        assert isinstance(client, GuardedAnthropic)
+        oai_client = openai.OpenAI(api_key="sk-fake")
+        assert not isinstance(oai_client, GuardedOpenAI)
+
+    def test_patch_openai_only(self) -> None:
+        """providers=["openai"] only patches OpenAI, not Anthropic."""
+        tokencap.patch(quiet=True, providers=["openai"])
+        oai_client = openai.OpenAI(api_key="sk-fake")
+        assert isinstance(oai_client, GuardedOpenAI)
+        anth_client = anthropic.Anthropic(api_key="sk-fake")
+        assert not isinstance(anth_client, GuardedAnthropic)
+
+    def test_patch_unknown_provider_raises(self) -> None:
+        """providers=["unknown"] raises ConfigurationError."""
+        with pytest.raises(ConfigurationError, match="Unknown providers"):
+            tokencap.patch(quiet=True, providers=["unknown"])
+
+    def test_patch_empty_providers_raises(self) -> None:
+        """providers=[] raises ConfigurationError."""
+        with pytest.raises(ConfigurationError, match="must not be empty"):
+            tokencap.patch(quiet=True, providers=[])
+
+    def test_unpatch_anthropic_only_leaves_openai(self) -> None:
+        """unpatch() after providers=["anthropic"] does not affect OpenAI."""
+        # Manually patch OpenAI first to verify it is not disturbed
+        orig_openai_cls = openai.OpenAI
+        tokencap.patch(quiet=True, providers=["anthropic"])
+        tokencap.unpatch()
+        # Anthropic should be restored
+        client = anthropic.Anthropic(api_key="sk-fake")
+        assert not isinstance(client, GuardedAnthropic)
+        # OpenAI class should be unchanged (same object as before patch)
+        assert openai.OpenAI is orig_openai_cls
+
+
 class TestUnpatch:
     """Tests for tokencap.unpatch()."""
 

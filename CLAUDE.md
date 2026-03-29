@@ -34,7 +34,8 @@ pricing tables. See D-001 and D-045.
 
 **Never monkey-patch SDK modules globally.** tokencap wraps client objects.
 The only exception is `tokencap.patch()`, which is an explicit opt-in function
-that the developer calls by name. `unpatch()` fully reverses the effect.
+that the developer calls by name. The `providers` parameter controls which SDKs
+are patched (default: both). `unpatch()` fully reverses the effect.
 See D-004 and D-050.
 
 **Never block the call path in WEBHOOK.** Webhook HTTP posts run in a background

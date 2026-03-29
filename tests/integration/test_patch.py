@@ -267,3 +267,51 @@ class TestPatchBothProvidersShareGuard:
         # Both calls contribute to the same session dimension
         assert usage_after_both > usage_after_anthropic
         assert usage_after_anthropic > 0
+
+
+class TestPatchProvidersAnthropicOnly:
+    """patch(providers=["anthropic"]) only patches Anthropic."""
+
+    def test_patch_providers_anthropic_only(
+        self, httpx_mock: object  # type: ignore[type-arg]
+    ) -> None:
+        """Only Anthropic is wrapped; OpenAI is left untouched."""
+        httpx_mock.add_response(  # type: ignore[union-attr]
+            json=anthropic_response(input_tokens=20, output_tokens=10),
+        )
+        tokencap.patch(limit=50_000, quiet=True, providers=["anthropic"])
+        anth = anthropic.Anthropic(api_key="sk-fake")
+        assert isinstance(anth, GuardedAnthropic)
+        anth.messages.create(
+            model="claude-sonnet-4-6", max_tokens=100,
+            messages=[{"role": "user", "content": "Hi"}],
+        )
+        status = tokencap.get_status()
+        assert status.dimensions["session"].used > 0
+
+        oai = openai.OpenAI(api_key="sk-fake")
+        assert not isinstance(oai, GuardedOpenAI)
+
+
+class TestPatchProvidersOpenAIOnly:
+    """patch(providers=["openai"]) only patches OpenAI."""
+
+    def test_patch_providers_openai_only(
+        self, httpx_mock: object  # type: ignore[type-arg]
+    ) -> None:
+        """Only OpenAI is wrapped; Anthropic is left untouched."""
+        httpx_mock.add_response(  # type: ignore[union-attr]
+            json=openai_response(prompt_tokens=20, completion_tokens=10),
+        )
+        tokencap.patch(limit=50_000, quiet=True, providers=["openai"])
+        oai = openai.OpenAI(api_key="sk-fake")
+        assert isinstance(oai, GuardedOpenAI)
+        oai.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hi"}],
+        )
+        status = tokencap.get_status()
+        assert status.dimensions["session"].used > 0
+
+        anth = anthropic.Anthropic(api_key="sk-fake")
+        assert not isinstance(anth, GuardedAnthropic)

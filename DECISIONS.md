@@ -850,3 +850,9 @@ differences from invisible global patching:
 - Only `__init__` is patched, not `messages.create` or other methods
 - `wrap()` remains the recommended approach for direct SDK usage
 - `patch()` prints a startup message showing what was patched
+
+The `providers` parameter (default `None`, meaning both `["anthropic", "openai"]`)
+lets the developer patch only the SDK they need. This is useful when only one
+SDK is installed or the agent framework uses only one provider. Unknown provider
+names and empty lists raise `ConfigurationError`. `unpatch()` only restores
+providers that were actually patched.

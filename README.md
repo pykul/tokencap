@@ -67,8 +67,8 @@ Anthropic or OpenAI SDKs internally.
 import tokencap
 from langchain_anthropic import ChatAnthropic
 
-tokencap.patch(limit=50_000)
-# [tokencap] patched: anthropic + openai
+tokencap.patch(limit=50_000, providers=["anthropic"])
+# [tokencap] patched: anthropic
 #            backend=sqlite:tokencap.db limit=50000 tokens
 
 llm = ChatAnthropic(model="claude-sonnet-4-6")
@@ -82,7 +82,7 @@ llm = ChatAnthropic(model="claude-sonnet-4-6")
 import tokencap
 from crewai import Agent, Task, Crew
 
-tokencap.patch(limit=100_000)
+tokencap.patch(limit=100_000)  # patches both anthropic + openai by default
 
 researcher = Agent(
     role="Researcher",
@@ -141,7 +141,7 @@ instead.
 
 ## Add a limit
 
-One argument. No other changes.
+One argument. No other changes. In patch mode: `tokencap.patch(limit=50_000)`
 
 ```python
 client = tokencap.wrap(anthropic.Anthropic(), limit=50_000)
@@ -174,7 +174,8 @@ except tokencap.BudgetExceededError as e:
 
 ## Full policy
 
-For warnings, model degradation, and webhooks before the hard stop, pass a policy:
+For warnings, model degradation, and webhooks before the hard stop, pass a policy.
+In patch mode: `tokencap.patch(policy=my_policy)`
 
 ```python
 import tokencap
@@ -574,6 +575,13 @@ tokencap.teardown()    # closes backend connections, resets global Guard
 tokencap.init(policy, identifiers=None, backend=None, otel_enabled=True, quiet=False)
 ```
 Optional. Pre-configures the global Guard before `wrap()` is called.
+
+```python
+tokencap.patch(limit=None, policy=None, quiet=False, providers=None)
+```
+Monkey-patches SDK constructors for framework integration. `providers` defaults
+to `["anthropic", "openai"]`. Pass a subset like `providers=["anthropic"]` to
+patch only one SDK. `unpatch()` reverses only what was patched.
 
 ### StatusResponse fields
 

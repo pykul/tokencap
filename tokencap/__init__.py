@@ -35,7 +35,9 @@ __all__ = [
 _guard: Guard | None = None
 _lock = threading.Lock()
 _patched: bool = False
+_patched_providers: set[str] = set()
 _original_inits: dict[str, Any] = {}
+_VALID_PROVIDERS = {"anthropic", "openai"}
 _log = logging.getLogger("tokencap")
 
 
@@ -131,6 +133,7 @@ def patch(
     limit: int | None = None,
     policy: Policy | None = None,
     quiet: bool = False,
+    providers: list[str] | None = None,
 ) -> None:
     """Monkey-patch SDK constructors so all new clients are automatically wrapped.
 
@@ -139,6 +142,8 @@ def patch(
     automatically tracked and enforced. Existing client instances are not affected.
 
     limit and policy are mutually exclusive. Passing both raises ConfigurationError.
+    providers defaults to ["anthropic", "openai"]. Pass a subset to patch only
+    specific SDKs.
     Call unpatch() to reverse all changes.
     """
     global _guard, _patched  # noqa: PLW0603
@@ -147,6 +152,19 @@ def patch(
         raise ConfigurationError(
             "patch() accepts limit or policy, not both. "
             "Use limit=N for a simple token cap, or policy=Policy(...) for full control."
+        )
+
+    target_providers = providers if providers is not None else sorted(_VALID_PROVIDERS)
+    if not target_providers:
+        raise ConfigurationError(
+            "providers must not be empty. "
+            f"Valid providers: {', '.join(sorted(_VALID_PROVIDERS))}"
+        )
+    unknown = set(target_providers) - _VALID_PROVIDERS
+    if unknown:
+        raise ConfigurationError(
+            f"Unknown providers: {', '.join(sorted(unknown))}. "
+            f"Valid providers: {', '.join(sorted(_VALID_PROVIDERS))}"
         )
 
     with _lock:
@@ -160,53 +178,56 @@ def patch(
 
         # Patch by replacing classes in the SDK module namespace with
         # factory functions that construct-then-wrap.
-        try:
-            import anthropic
+        if "anthropic" in target_providers:
+            try:
+                import anthropic
 
-            _original_inits["anthropic.Anthropic"] = anthropic.Anthropic
-            _original_inits["anthropic.AsyncAnthropic"] = anthropic.AsyncAnthropic
+                _original_inits["anthropic.Anthropic"] = anthropic.Anthropic
+                _original_inits["anthropic.AsyncAnthropic"] = anthropic.AsyncAnthropic
 
-            orig_anth = anthropic.Anthropic
-            orig_async_anth = anthropic.AsyncAnthropic
+                orig_anth = anthropic.Anthropic
+                orig_async_anth = anthropic.AsyncAnthropic
 
-            def _make_anthropic(*args: Any, **kwargs: Any) -> Any:
-                real = orig_anth(*args, **kwargs)
-                return _guard.wrap_anthropic(real) if _guard is not None else real
+                def _make_anthropic(*args: Any, **kwargs: Any) -> Any:
+                    real = orig_anth(*args, **kwargs)
+                    return _guard.wrap_anthropic(real) if _guard is not None else real
 
-            def _make_async_anthropic(*args: Any, **kwargs: Any) -> Any:
-                real = orig_async_anth(*args, **kwargs)
-                return _guard.wrap_anthropic(real) if _guard is not None else real
+                def _make_async_anthropic(*args: Any, **kwargs: Any) -> Any:
+                    real = orig_async_anth(*args, **kwargs)
+                    return _guard.wrap_anthropic(real) if _guard is not None else real
 
-            anthropic.Anthropic = _make_anthropic  # type: ignore[assignment,misc]
-            anthropic.AsyncAnthropic = _make_async_anthropic  # type: ignore[assignment,misc]
-            patched_sdks.append("anthropic")
-        except ImportError:
-            pass
+                anthropic.Anthropic = _make_anthropic  # type: ignore[assignment,misc]
+                anthropic.AsyncAnthropic = _make_async_anthropic  # type: ignore[assignment,misc]
+                patched_sdks.append("anthropic")
+            except ImportError:
+                pass
 
-        try:
-            import openai
+        if "openai" in target_providers:
+            try:
+                import openai
 
-            _original_inits["openai.OpenAI"] = openai.OpenAI
-            _original_inits["openai.AsyncOpenAI"] = openai.AsyncOpenAI
+                _original_inits["openai.OpenAI"] = openai.OpenAI
+                _original_inits["openai.AsyncOpenAI"] = openai.AsyncOpenAI
 
-            orig_oai = openai.OpenAI
-            orig_async_oai = openai.AsyncOpenAI
+                orig_oai = openai.OpenAI
+                orig_async_oai = openai.AsyncOpenAI
 
-            def _make_openai(*args: Any, **kwargs: Any) -> Any:
-                real = orig_oai(*args, **kwargs)
-                return _guard.wrap_openai(real) if _guard is not None else real
+                def _make_openai(*args: Any, **kwargs: Any) -> Any:
+                    real = orig_oai(*args, **kwargs)
+                    return _guard.wrap_openai(real) if _guard is not None else real
 
-            def _make_async_openai(*args: Any, **kwargs: Any) -> Any:
-                real = orig_async_oai(*args, **kwargs)
-                return _guard.wrap_openai(real) if _guard is not None else real
+                def _make_async_openai(*args: Any, **kwargs: Any) -> Any:
+                    real = orig_async_oai(*args, **kwargs)
+                    return _guard.wrap_openai(real) if _guard is not None else real
 
-            openai.OpenAI = _make_openai  # type: ignore[assignment,misc]
-            openai.AsyncOpenAI = _make_async_openai  # type: ignore[assignment,misc]
-            patched_sdks.append("openai")
-        except ImportError:
-            pass
+                openai.OpenAI = _make_openai  # type: ignore[assignment,misc]
+                openai.AsyncOpenAI = _make_async_openai  # type: ignore[assignment,misc]
+                patched_sdks.append("openai")
+            except ImportError:
+                pass
 
         _patched = True
+        _patched_providers.update(patched_sdks)
 
         if not quiet:
             sdk_str = " + ".join(patched_sdks) if patched_sdks else "none"
@@ -224,34 +245,40 @@ def patch(
 
 
 def unpatch() -> None:
-    """Reverse all monkey-patches applied by patch() and tear down the Guard."""
+    """Reverse all monkey-patches applied by patch() and tear down the Guard.
+
+    Only restores providers that were actually patched.
+    """
     global _patched  # noqa: PLW0603
 
     with _lock:
         if not _patched:
             return
 
-        try:
-            import anthropic
+        if "anthropic" in _patched_providers:
+            try:
+                import anthropic
 
-            if "anthropic.Anthropic" in _original_inits:
-                anthropic.Anthropic = _original_inits.pop("anthropic.Anthropic")  # type: ignore[misc]
-            if "anthropic.AsyncAnthropic" in _original_inits:
-                anthropic.AsyncAnthropic = _original_inits.pop("anthropic.AsyncAnthropic")  # type: ignore[misc]
-        except ImportError:
-            pass
+                if "anthropic.Anthropic" in _original_inits:
+                    anthropic.Anthropic = _original_inits.pop("anthropic.Anthropic")  # type: ignore[misc]
+                if "anthropic.AsyncAnthropic" in _original_inits:
+                    anthropic.AsyncAnthropic = _original_inits.pop("anthropic.AsyncAnthropic")  # type: ignore[misc]
+            except ImportError:
+                pass
 
-        try:
-            import openai
+        if "openai" in _patched_providers:
+            try:
+                import openai
 
-            if "openai.OpenAI" in _original_inits:
-                openai.OpenAI = _original_inits.pop("openai.OpenAI")  # type: ignore[misc]
-            if "openai.AsyncOpenAI" in _original_inits:
-                openai.AsyncOpenAI = _original_inits.pop("openai.AsyncOpenAI")  # type: ignore[misc]
-        except ImportError:
-            pass
+                if "openai.OpenAI" in _original_inits:
+                    openai.OpenAI = _original_inits.pop("openai.OpenAI")  # type: ignore[misc]
+                if "openai.AsyncOpenAI" in _original_inits:
+                    openai.AsyncOpenAI = _original_inits.pop("openai.AsyncOpenAI")  # type: ignore[misc]
+            except ImportError:
+                pass
 
         _patched = False
+        _patched_providers.clear()
 
     teardown()
 
