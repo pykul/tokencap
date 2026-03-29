@@ -32,6 +32,7 @@ dev = [
     "redis>=4.0",
     "opentelemetry-api>=1.0",
     "pytest",
+    "pytest-asyncio",
     "pytest-httpx",
     "mypy",
     "ruff",
@@ -67,3 +68,4 @@ ignore = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"

@@ -33,6 +33,7 @@ __all__ = [
     "ResetPeriod",
     "BudgetExceededError",
     "BackendError",
+    "ConfigurationError",
     "StatusResponse",
 ]
 

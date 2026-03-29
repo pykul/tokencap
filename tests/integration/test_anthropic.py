@@ -117,3 +117,55 @@ class TestAnthropicIntegration:
         states = backend.get_states([key])
         assert states["session"].used == 35  # 25 input + 10 output
         backend.close()
+
+
+class TestAnthropicAsyncIntegration:
+    """Async integration tests for Anthropic via tokencap drop-in API."""
+
+    @pytest.mark.asyncio
+    async def test_async_wrap_tracks_tokens(
+        self,
+        tmp_path: object,
+        httpx_mock: object,  # type: ignore[type-arg]
+    ) -> None:
+        """wrap(AsyncAnthropic) + await create() tracks tokens end-to-end."""
+        import tokencap
+
+        httpx_mock.add_response(  # type: ignore[union-attr]
+            json=anthropic_response(input_tokens=20, output_tokens=10),
+        )
+        try:
+            client = tokencap.wrap(
+                anthropic.AsyncAnthropic(api_key="sk-fake-key"),
+                limit=10_000, quiet=True,
+            )
+            response = await client.messages.create(
+                model="claude-sonnet-4-6", max_tokens=100,
+                messages=[{"role": "user", "content": "Hi"}],
+            )
+            assert response.content[0].text
+            status = client.get_status()
+            assert status.dimensions["session"].used > 0
+        finally:
+            tokencap.teardown()
+
+    @pytest.mark.asyncio
+    async def test_async_wrap_blocks_when_exceeded(
+        self,
+        httpx_mock: object,  # type: ignore[type-arg]
+    ) -> None:
+        """wrap(AsyncAnthropic, limit=1) raises BudgetExceededError."""
+        import tokencap
+
+        try:
+            client = tokencap.wrap(
+                anthropic.AsyncAnthropic(api_key="sk-fake-key"),
+                limit=1, quiet=True,
+            )
+            with pytest.raises(BudgetExceededError):
+                await client.messages.create(
+                    model="claude-sonnet-4-6", max_tokens=100,
+                    messages=[{"role": "user", "content": "Hi"}],
+                )
+        finally:
+            tokencap.teardown()

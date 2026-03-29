@@ -625,7 +625,18 @@ def _evaluate_thresholds(
 
 
 def _fire_webhook(url: str, status: Any) -> None:
-    """Fire a webhook POST in a background daemon thread. Never blocks."""
+    """Fire a webhook POST in a background daemon thread. Never blocks.
+
+    Only http:// and https:// URLs are accepted. Other schemes are rejected
+    with a WARNING log to prevent SSRF.
+
+    The webhook payload is a JSON object containing the full StatusResponse as
+    a string. This includes dimension names, identifier strings, token counts,
+    and usage percentages. Dimension identifiers may contain sensitive data if
+    the developer uses values such as user IDs or tenant IDs. Do not pass PII
+    as dimension identifiers if your webhook endpoint is not trusted or not
+    under your control.
+    """
     def post() -> None:
         try:
             data = json.dumps({"status": str(status)}).encode()
@@ -1733,16 +1744,19 @@ Acceptance criteria:
 
 ### Phase 5: Tests + Docs + Publish
 
-Deliverables:
-- `tests/integration/test_full_pipeline.py`: real API calls, skipped without keys
-- `README.md`: complete, both modes shown, all actions documented, examples tested
-- `DECISIONS.md`: finalised with all decisions from the build
+Delivered:
+- `scripts/smoke_test.py`: standalone 67-test verification script covering all
+  user-facing features against real provider APIs
+- `README.md`: complete with both `wrap()` and `patch()` modes, all actions
+  documented, enum API, framework integration guide
+- `DECISIONS.md`: finalised through D-051
 - `CLAUDE.md`: finalised standing rules
-- PyPI publish via `make publish`
-- dev.to post draft
+- `CHANGELOG.md`: v0.1.0 release entry
 
 Acceptance criteria:
-- `mypy --strict` passes clean across the entire codebase
-- All unit tests pass with zero failures and zero unexpected skips
+- `mypy --strict` passes clean across all source files
+- 155 unit and integration tests pass with `make test`
+- 6 live tests pass with `make test-live` (real Redis)
+- 67 smoke tests pass with `python scripts/smoke_test.py`
+  (real Anthropic and OpenAI APIs)
 - `pip install tokencap` then README quickstart works against real provider APIs
-- Package appears on PyPI within 5 minutes of `make publish`

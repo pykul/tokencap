@@ -19,6 +19,7 @@ use the cheapest models with max_tokens=20).
 from __future__ import annotations
 
 import asyncio
+import logging.handlers
 import os
 import sys
 import time
@@ -1840,6 +1841,44 @@ def test_unsupported_client_raises() -> tuple[bool, str]:
         _ensure_clean()
 
 
+def test_wrap_twice_warns_and_reuses() -> tuple[bool, str]:
+    """wrap() called twice reuses Guard, logs warning, ignores new limit."""
+    import logging
+    import anthropic
+    import tokencap
+    try:
+        _log("First wrap(limit=5000), then second wrap(limit=9999) without teardown")
+        client1 = tokencap.wrap(anthropic.Anthropic(), limit=5000, quiet=True)
+        client1.messages.create(
+            model=ANTHROPIC_MODEL, max_tokens=MAX_TOKENS,
+            messages=SMALL_MESSAGES_ANTHROPIC,
+        )
+
+        handler = logging.handlers.MemoryHandler(capacity=100)  # type: ignore[attr-defined]
+        logger = logging.getLogger("tokencap")
+        logger.addHandler(handler)
+        logger.setLevel(logging.WARNING)
+        try:
+            tokencap.wrap(anthropic.Anthropic(), limit=9999, quiet=True)
+        finally:
+            logger.removeHandler(handler)
+
+        warned = any(
+            "wrap() called" in r.getMessage() for r in handler.buffer
+        )
+        if not warned:
+            return False, "no WARNING logged for second wrap()"
+        _log("WARNING logged for second wrap()")
+
+        status = tokencap.get_status()
+        if status.dimensions["session"].limit != 5000:
+            return False, f"limit={status.dimensions['session'].limit}, expected 5000"
+        _log(f"Guard reused: limit still {status.dimensions['session'].limit}")
+        return True, ""
+    finally:
+        _ensure_clean()
+
+
 # ===================================================================
 # Section runners
 # ===================================================================
@@ -1955,6 +1994,7 @@ def run_section_6() -> None:
     _run("test_teardown_rewrap_fresh", test_teardown_rewrap_fresh)
     _run("test_patch_unpatch_repatch_cycle", test_patch_unpatch_repatch_cycle)
     _run("test_unsupported_client_raises", test_unsupported_client_raises)
+    _run("test_wrap_twice_warns_and_reuses", test_wrap_twice_warns_and_reuses)
 
 
 # ===================================================================

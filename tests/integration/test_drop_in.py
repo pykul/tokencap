@@ -370,3 +370,71 @@ class TestWebhookHTTPPost:
             mock_urlopen.assert_called_once()
             req = mock_urlopen.call_args[0][0]
             assert "test-hook.example.com" in req.full_url
+
+
+class TestWrapTwice:
+    """Tests for wrap() called twice without teardown."""
+
+    def test_wrap_twice_warns_and_reuses_guard(self) -> None:
+        """Second wrap() logs WARNING and reuses the original Guard."""
+        tokencap.wrap(
+            anthropic.Anthropic(api_key="sk-fake"), limit=1000, quiet=True,
+        )
+        with patch("tokencap._log") as mock_log:
+            tokencap.wrap(
+                anthropic.Anthropic(api_key="sk-fake"), limit=9999, quiet=True,
+            )
+            mock_log.warning.assert_called_once()
+            assert "wrap() called" in mock_log.warning.call_args[0][0]
+        # Original limit is still 1000
+        status = tokencap.get_status()
+        assert status.dimensions["session"].limit == 1000
+
+
+class TestSQLiteDataAccuracy:
+    """Data accuracy: verify SQLite DB matches get_status() after a real call."""
+
+    def test_sqlite_data_accuracy_after_real_call(
+        self,
+        tmp_path: object,
+        httpx_mock: object,  # type: ignore[type-arg]
+    ) -> None:
+        """SQLite stored value matches mocked response usage and get_status()."""
+        import sqlite3
+
+        from tokencap.backends.sqlite import SQLiteBackend
+
+        db_path = str(tmp_path) + "/accuracy.db"  # type: ignore[operator]
+        backend = SQLiteBackend(path=db_path)
+        tokencap.init(
+            policy=make_policy(dimensions={
+                "session": make_dimension_policy(limit=10_000),
+            }),
+            backend=backend,
+            quiet=True,
+        )
+        httpx_mock.add_response(  # type: ignore[union-attr]
+            json=anthropic_response(input_tokens=50, output_tokens=30),
+        )
+        client = tokencap.wrap(anthropic.Anthropic(api_key="sk-fake"))
+        client.messages.create(
+            model="claude-sonnet-4-6", max_tokens=100,
+            messages=[{"role": "user", "content": "Hi"}],
+        )
+
+        # Direct DB query
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            "SELECT used_tokens FROM budgets "
+            "WHERE key_dimension = 'session'",
+        ).fetchone()
+        conn.close()
+
+        db_used = row[0]
+        status_used = tokencap.get_status().dimensions["session"].used
+
+        # The mocked response returns input=50 + output=30 = 80 total.
+        # The estimate is small (~5 for "Hi"), so after reconciliation
+        # the DB should hold 80 total tokens.
+        assert db_used == 80
+        assert status_used == db_used

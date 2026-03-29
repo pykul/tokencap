@@ -133,3 +133,56 @@ class TestGetStatus:
         # session at 0.70, threshold at 0.8 -> gap 0.10
         assert status.next_threshold.dimension == "tenant"
         assert status.next_threshold.at_pct == 0.9
+
+    def test_next_threshold_excludes_block(self) -> None:
+        """next_threshold returns WARN, not BLOCK, when both are unfired (D-044)."""
+        mock_backend = MagicMock()
+        policy = make_policy(dimensions={
+            "session": make_dimension_policy(
+                limit=1000,
+                thresholds=[
+                    make_threshold(at_pct=0.5, actions=[
+                        make_action(kind=ActionKind.WARN),
+                    ]),
+                    make_threshold(at_pct=1.0, actions=[
+                        make_action(kind=ActionKind.BLOCK),
+                    ]),
+                ],
+            ),
+        })
+        key = BudgetKey("session", "s-id")
+        state = BudgetState(key=key, limit=1000, used=300, remaining=700, pct_used=0.3)
+        mock_backend.get_states.return_value = {"session": state}
+        mock_backend.is_threshold_fired.return_value = False
+        guard = Guard(
+            policy=policy,
+            identifiers={"session": "s-id"},
+            backend=mock_backend, quiet=True,
+        )
+        status = get_status(guard)
+        assert status.next_threshold is not None
+        assert status.next_threshold.at_pct == 0.5
+        assert "WARN" in status.next_threshold.action_kinds
+
+    def test_next_threshold_skips_block_when_only_option(self) -> None:
+        """next_threshold is None when only a BLOCK threshold exists."""
+        mock_backend = MagicMock()
+        policy = make_policy(dimensions={
+            "session": make_dimension_policy(
+                limit=1000,
+                thresholds=[make_threshold(at_pct=1.0, actions=[
+                    make_action(kind=ActionKind.BLOCK),
+                ])],
+            ),
+        })
+        key = BudgetKey("session", "s-id")
+        state = BudgetState(key=key, limit=1000, used=300, remaining=700, pct_used=0.3)
+        mock_backend.get_states.return_value = {"session": state}
+        mock_backend.is_threshold_fired.return_value = False
+        guard = Guard(
+            policy=policy,
+            identifiers={"session": "s-id"},
+            backend=mock_backend, quiet=True,
+        )
+        status = get_status(guard)
+        assert status.next_threshold is None

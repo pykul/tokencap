@@ -24,7 +24,7 @@ A single install gives you everything needed to run tests and lint.
 
 **Provider API keys** are the standard env vars for each SDK. Set them in your
 shell or a `.env` file. When absent, the live provider tests run in mock
-fallback mode automatically — no credentials are needed for `make test` or
+fallback mode automatically. No credentials are needed for `make test` or
 `make test-live`.
 
 ```bash
@@ -36,7 +36,7 @@ export OPENAI_API_KEY=sk-...
 applies to both local development and production use of `RedisBackend`.
 
 For local development, `make redis-up` starts a container at the default
-address — no configuration needed:
+address. No configuration needed:
 
 ```bash
 make redis-up
@@ -75,6 +75,21 @@ make redis-down    # stop Redis container
 **Redis live tests** read `REDIS_URL` from the environment and default to
 `redis://localhost:6379` if not set. When Redis is not reachable, the test
 falls back to an in-memory mock and still exercises the full code path.
+
+## Smoke test
+
+`scripts/smoke_test.py` runs every tokencap feature against real Anthropic and
+OpenAI APIs. It is the human verification step before a release. It is not part
+of CI.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...
+python scripts/smoke_test.py
+```
+
+Uses the cheapest available models with minimal tokens (~$0.001 total). Requires
+real API keys — no mock fallback.
 
 ## Running lint
 

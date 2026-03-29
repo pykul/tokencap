@@ -6,6 +6,7 @@ Backend-specific tests (concurrent writes, import errors) are separate.
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 from typing import Any
 from unittest.mock import patch
@@ -443,3 +444,141 @@ class TestRedisConcurrentWrites:
         assert not errors, f"Thread errors: {errors}"
         states = b.get_states([key])
         assert states["session"].used == num_threads * increments_per_thread
+
+
+class TestSQLiteClose:
+    """Direct test of SQLiteBackend.close()."""
+
+    def test_sqlite_close_closes_connection(self, tmp_db: str) -> None:
+        """After close(), the underlying SQLite connection is unusable."""
+        backend = SQLiteBackend(path=tmp_db)
+        backend.close()
+        with pytest.raises(sqlite3.ProgrammingError):
+            backend._conn.execute("SELECT 1")
+
+
+class TestRedisClose:
+    """Direct test of RedisBackend.close()."""
+
+    def test_redis_close_calls_client_close(self) -> None:
+        """close() calls the underlying Redis client's close()."""
+        from unittest.mock import MagicMock
+
+        b = _make_mock_redis_backend()
+        # Replace close with a MagicMock to track the call
+        mock_close = MagicMock()
+        b._client.close = mock_close
+        b.close()
+        mock_close.assert_called_once()
+
+
+class TestSQLiteDataAccuracy:
+    """Data accuracy: query SQLite directly and verify values match API."""
+
+    def test_sqlite_used_tokens_accurate_after_increment(
+        self, tmp_db: str,
+    ) -> None:
+        """Direct DB read matches CheckResult after check_and_increment."""
+        backend = SQLiteBackend(path=tmp_db)
+        key = BudgetKey(dimension="session", identifier="acc-test")
+        backend.set_limit(key, 1000)
+        result = backend.check_and_increment([key], 50)
+
+        # Direct DB query
+        conn = sqlite3.connect(tmp_db)
+        row = conn.execute(
+            "SELECT used_tokens FROM budgets "
+            "WHERE key_dimension = ? AND key_identifier = ?",
+            (key.dimension, key.identifier),
+        ).fetchone()
+        conn.close()
+
+        assert row is not None
+        assert row[0] == 50
+        assert result.states["session"].used == 50
+        assert row[0] == result.states["session"].used
+        backend.close()
+
+    def test_sqlite_threshold_fired_persisted(
+        self, tmp_db: str,
+    ) -> None:
+        """Fired threshold is persisted in DB and cleared by reset()."""
+        backend = SQLiteBackend(path=tmp_db)
+        key = BudgetKey(dimension="session", identifier="fired-test")
+        backend.set_limit(key, 1000)
+
+        backend.mark_threshold_fired(key, 0.8)
+
+        # Direct DB query — row should exist
+        conn = sqlite3.connect(tmp_db)
+        row = conn.execute(
+            "SELECT 1 FROM fired_thresholds "
+            "WHERE key_dimension = ? AND key_identifier = ? AND at_pct = ?",
+            (key.dimension, key.identifier, 0.8),
+        ).fetchone()
+        assert row is not None
+        assert backend.is_threshold_fired(key, 0.8) is True
+
+        # Reset clears it
+        backend.reset(key)
+        row = conn.execute(
+            "SELECT 1 FROM fired_thresholds "
+            "WHERE key_dimension = ? AND key_identifier = ? AND at_pct = ?",
+            (key.dimension, key.identifier, 0.8),
+        ).fetchone()
+        conn.close()
+        assert row is None
+        assert backend.is_threshold_fired(key, 0.8) is False
+        backend.close()
+
+    def test_sqlite_get_status_matches_db(
+        self, tmp_db: str,
+    ) -> None:
+        """Guard.get_status().used matches the raw DB value exactly."""
+        from tokencap.core.guard import Guard
+        from tokencap.core.policy import DimensionPolicy, Policy
+
+        backend = SQLiteBackend(path=tmp_db)
+        policy = Policy(dimensions={
+            "session": DimensionPolicy(limit=5000),
+        })
+        guard = Guard(
+            policy=policy,
+            identifiers={"session": "status-test"},
+            backend=backend,
+            quiet=True,
+        )
+        key = BudgetKey(dimension="session", identifier="status-test")
+        backend.check_and_increment([key], 100)
+
+        conn = sqlite3.connect(tmp_db)
+        row = conn.execute(
+            "SELECT used_tokens FROM budgets "
+            "WHERE key_dimension = ? AND key_identifier = ?",
+            (key.dimension, key.identifier),
+        ).fetchone()
+        conn.close()
+        db_used = row[0]
+
+        status = guard.get_status()
+        assert status.dimensions["session"].used == db_used
+        assert db_used == 100
+        guard.teardown()
+
+
+class TestRedisDataAccuracy:
+    """Data accuracy: query mock Redis directly and verify values match API."""
+
+    def test_redis_used_tokens_accurate_after_increment(self) -> None:
+        """Direct mock Redis read matches CheckResult after increment."""
+        b = _make_mock_redis_backend()
+        key = BudgetKey(dimension="session", identifier="redis-acc")
+        b.set_limit(key, 1000)
+        result = b.check_and_increment([key], 75)
+
+        stored = b._client.get(
+            f"tokencap:used:{key.dimension}:{key.identifier}",
+        )
+        assert int(stored) == 75
+        assert result.states["session"].used == 75
+        assert int(stored) == result.states["session"].used

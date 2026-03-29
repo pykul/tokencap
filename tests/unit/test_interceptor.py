@@ -17,6 +17,8 @@ from tokencap.interceptor.base import (
     GuardedStream,
     _evaluate_thresholds,
     call,
+    call_async,
+    call_stream,
 )
 
 # ---------------------------------------------------------------------------
@@ -101,6 +103,169 @@ class TestCall:
         with pytest.raises(BackendError, match="check_and_increment failed"):
             call(real_fn, {"model": "test"}, stub_guard, mock_provider)
         real_fn.assert_not_called()
+
+    def test_call_stream_blocks_when_budget_exceeded(
+        self,
+        stub_guard: Guard,
+        mock_backend: MagicMock,
+        mock_provider: MagicMock,
+    ) -> None:
+        """call_stream() raises BudgetExceededError before the provider is called."""
+        key = BudgetKey("session", "test-id")
+        state = BudgetState(key=key, limit=1, used=1, remaining=0, pct_used=1.0)
+        mock_backend.check_and_increment.return_value = CheckResult(
+            allowed=False, states={"session": state}, violated=["session"]
+        )
+        real_fn = MagicMock()
+        with pytest.raises(BudgetExceededError):
+            call_stream(real_fn, {"model": "test"}, stub_guard, mock_provider)
+        real_fn.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# call_async() tests
+# ---------------------------------------------------------------------------
+
+
+class TestCallAsync:
+    """Tests for the async call path."""
+
+    @pytest.mark.asyncio
+    async def test_call_async_tracks_tokens(
+        self,
+        stub_guard: Guard,
+        mock_backend: MagicMock,
+        mock_provider: MagicMock,
+    ) -> None:
+        """call_async() calls force_increment with the usage delta."""
+        mock_provider.extract_usage.return_value = TokenUsage(
+            input_tokens=80, output_tokens=40,
+        )
+        mock_provider.estimate_tokens.return_value = 50
+
+        async def fake_fn(**kwargs: object) -> str:
+            return "response"
+
+        response = await call_async(
+            fake_fn, {"model": "test"}, stub_guard, mock_provider,
+        )
+        assert response == "response"
+        # actual.total=120, estimated=50, delta=70
+        mock_backend.force_increment.assert_called_once()
+        delta = mock_backend.force_increment.call_args[0][1]
+        assert delta == 70
+
+    @pytest.mark.asyncio
+    async def test_call_async_blocks_when_budget_exceeded(
+        self,
+        stub_guard: Guard,
+        mock_backend: MagicMock,
+        mock_provider: MagicMock,
+    ) -> None:
+        """call_async() raises BudgetExceededError before awaiting the provider."""
+        key = BudgetKey("session", "test-id")
+        state = BudgetState(key=key, limit=1, used=1, remaining=0, pct_used=1.0)
+        mock_backend.check_and_increment.return_value = CheckResult(
+            allowed=False, states={"session": state}, violated=["session"]
+        )
+        called = False
+
+        async def fake_fn(**kwargs: object) -> str:
+            nonlocal called
+            called = True
+            return "should not reach"
+
+        with pytest.raises(BudgetExceededError):
+            await call_async(
+                fake_fn, {"model": "test"}, stub_guard, mock_provider,
+            )
+        assert not called
+
+    @pytest.mark.asyncio
+    async def test_call_async_evaluates_thresholds(
+        self,
+        mock_backend: MagicMock,
+        mock_provider: MagicMock,
+    ) -> None:
+        """call_async() fires WARN callback when threshold is crossed."""
+        warned: list[object] = []
+
+        def on_warn(status: object) -> None:
+            warned.append(status)
+
+        policy = make_policy(dimensions={
+            "session": make_dimension_policy(
+                limit=100,
+                thresholds=[make_threshold(at_pct=0.5, actions=[
+                    make_action(kind=ActionKind.WARN, callback=on_warn),
+                ])],
+            ),
+        })
+        guard = Guard(
+            policy=policy,
+            identifiers={"session": "test-id"},
+            backend=mock_backend,
+            quiet=True,
+        )
+        key = BudgetKey("session", "test-id")
+        state = BudgetState(
+            key=key, limit=100, used=60, remaining=40, pct_used=0.6,
+        )
+        mock_backend.check_and_increment.return_value = CheckResult(
+            allowed=True, states={"session": state}, violated=[],
+        )
+        mock_provider.extract_usage.return_value = TokenUsage(
+            input_tokens=30, output_tokens=30,
+        )
+        mock_provider.estimate_tokens.return_value = 50
+
+        async def fake_fn(**kwargs: object) -> str:
+            return "ok"
+
+        await call_async(fake_fn, {"model": "test"}, guard, mock_provider)
+        assert len(warned) == 1
+
+    @pytest.mark.asyncio
+    async def test_call_async_wraps_backend_error(
+        self,
+        stub_guard: Guard,
+        mock_backend: MagicMock,
+        mock_provider: MagicMock,
+    ) -> None:
+        """Backend RuntimeError is wrapped as BackendError in async path."""
+        from tokencap.core.exceptions import BackendError
+
+        mock_backend.check_and_increment.side_effect = RuntimeError("boom")
+
+        async def fake_fn(**kwargs: object) -> str:
+            return "should not reach"
+
+        with pytest.raises(BackendError, match="check_and_increment failed"):
+            await call_async(
+                fake_fn, {"model": "test"}, stub_guard, mock_provider,
+            )
+
+    @pytest.mark.asyncio
+    async def test_call_async_reconciles_after_call(
+        self,
+        stub_guard: Guard,
+        mock_backend: MagicMock,
+        mock_provider: MagicMock,
+    ) -> None:
+        """call_async() reconciles actual vs estimated usage."""
+        mock_provider.estimate_tokens.return_value = 200
+        mock_provider.extract_usage.return_value = TokenUsage(
+            input_tokens=100, output_tokens=50,
+        )
+
+        async def fake_fn(**kwargs: object) -> str:
+            return "ok"
+
+        await call_async(
+            fake_fn, {"model": "test"}, stub_guard, mock_provider,
+        )
+        # actual.total=150, estimated=200, delta=-50 => no force_increment
+        mock_backend.force_increment.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +440,56 @@ class TestEvaluateThresholds:
         with patch.object(threading.Thread, "start") as mock_start:
             _evaluate_thresholds(guard, [key], {"session": state}, {})
             mock_start.assert_called_once()
+
+    def test_warn_callback_receives_status_response(
+        self, mock_backend: MagicMock
+    ) -> None:
+        """WARN callback receives a StatusResponse with correct fields."""
+        from tokencap.status.api import StatusResponse
+
+        captured: list[object] = []
+
+        def on_warn(status: object) -> None:
+            captured.append(status)
+
+        policy = make_policy(dimensions={"session": make_dimension_policy(
+            limit=1000,
+            thresholds=[make_threshold(at_pct=0.5, actions=[
+                make_action(kind=ActionKind.WARN, callback=on_warn),
+            ])],
+        )})
+        guard = self._make_guard(policy, mock_backend)
+        key = BudgetKey("session", "test-id")
+        state = BudgetState(
+            key=key, limit=1000, used=600, remaining=400, pct_used=0.6,
+        )
+        _evaluate_thresholds(guard, [key], {"session": state}, {})
+        assert len(captured) == 1
+        status = captured[0]
+        assert isinstance(status, StatusResponse)
+        assert status.timestamp
+        assert isinstance(status.dimensions, dict)
+        assert isinstance(status.active_policy, str)
+        assert status.active_policy
+
+    def test_webhook_invalid_scheme_skipped(
+        self, mock_backend: MagicMock
+    ) -> None:
+        """WEBHOOK: file:// URL logs WARNING and does not call urlopen."""
+        policy = make_policy(dimensions={"session": make_dimension_policy(
+            limit=1000,
+            thresholds=[make_threshold(at_pct=0.5, actions=[
+                make_action(kind=ActionKind.WEBHOOK, webhook_url="file:///etc/passwd"),
+            ])],
+        )})
+        guard = self._make_guard(policy, mock_backend)
+        key = BudgetKey("session", "test-id")
+        state = BudgetState(
+            key=key, limit=1000, used=600, remaining=400, pct_used=0.6,
+        )
+        with patch.object(threading.Thread, "start") as mock_start:
+            _evaluate_thresholds(guard, [key], {"session": state}, {})
+            mock_start.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

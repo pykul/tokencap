@@ -12,12 +12,26 @@ pip install tokencap
 
 ## The problem
 
-AI agents are unpredictable by design. An agent might make 3 LLM calls or 300. Without
-visibility into what each agent is spending, and without the ability to enforce limits,
-you find out about runaway costs from the bill, not an alert.
+AI agents do not behave like normal code. A bug causes a retry loop. An agent
+misreads a response and calls the API 300 times instead of 3. A background job
+runs overnight and nobody notices until the invoice arrives.
 
-tokencap gives you both. See exactly what every agent is spending. Enforce hard limits,
-soft warnings, model degradation, or webhook alerts, whichever fits your use case.
+These are not edge cases. They happen constantly:
+
+- A research agent entered a retry loop and ran for 11 days. Bill: $47,000.
+- A GPT-4o agent retried a failed analysis in a tight loop for 10 minutes.
+  Bill: $187.
+- A multi-tenant SaaS product had one runaway session exhaust the entire
+  monthly API budget allocated across all customers.
+
+Provider-level spending caps help, but they are coarse and reactive, capping
+your entire account, not individual agents or tenants, and they do not stop a
+session mid-flight.
+
+tokencap gives you enforcement in your code. Set a token budget per session,
+per tenant, per pipeline run, or across any dimension that matters. When the
+budget is hit, the call is blocked before it reaches the provider, before the
+tokens are gone.
 
 ---
 
@@ -31,8 +45,8 @@ export OPENAI_API_KEY=sk-...          # OpenAI
 ```
 
 tokencap works in two modes. Use `wrap()` when you construct SDK clients
-directly. Use `patch()` when an agent framework constructs clients internally
-— it intercepts every client created anywhere in the process automatically.
+directly. Use `patch()` when an agent framework constructs clients internally.
+It intercepts every client created anywhere in the process automatically.
 
 ### Direct client wrapping
 
@@ -146,6 +160,25 @@ One argument. No other changes. In patch mode: `tokencap.patch(limit=50_000)`
 ```python
 client = tokencap.wrap(anthropic.Anthropic(), limit=50_000)
 # [tokencap] session started: session=a3f1c2d4 backend=sqlite:tokencap.db limit=50000 tokens
+```
+
+Limits can be loaded from environment variables for dynamic configuration:
+
+```python
+import os
+client = tokencap.wrap(
+    anthropic.Anthropic(),
+    limit=int(os.environ.get("TOKENCAP_LIMIT", "50000")),
+)
+```
+
+The same pattern works with `patch()`:
+
+```python
+tokencap.patch(
+    limit=int(os.environ.get("TOKENCAP_LIMIT", "50000")),
+    providers=[tokencap.Provider.ANTHROPIC],
+)
 ```
 
 Check status at any time:
@@ -287,6 +320,8 @@ tokencap.Threshold(
 ### WEBHOOK: fire an HTTP POST and continue
 
 Fire-and-forget in a background thread. Does not add latency to the call path.
+The webhook payload includes dimension names and identifiers. Avoid using PII
+as identifier values if your webhook endpoint is not fully trusted.
 
 ```python
 tokencap.Threshold(
@@ -332,8 +367,8 @@ prices it, or whether tokens are cached.
 
 Dollar cost tracking is deliberately absent. Provider pricing changes without
 notice and no machine-readable pricing API exists. A dollar figure derived from
-a stale table is worse than no figure at all. Token counts are always accurate
-— they come directly from the provider response.
+a stale table is worse than no figure at all. Token counts are always accurate.
+They come directly from the provider response.
 
 If you know your task takes roughly 5,000 tokens per call and you want to cap at
 10 calls, you set a limit of 50,000. No conversion needed.
@@ -351,6 +386,24 @@ in the application code. They connect via tokencap's OTEL emission.
 **No tool at all.** The most common situation. Most teams set a provider-level
 spending cap and find out about runaway costs from the bill. tokencap is for teams
 who want enforcement in the code, not reactive alerts after the money is spent.
+
+---
+
+## Try it yourself
+
+`scripts/smoke_test.py` runs every tokencap feature against your real Anthropic
+and OpenAI API keys — wrap mode, patch mode, all four policy actions,
+multi-dimensional budgets, async clients, and more.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...
+python scripts/smoke_test.py
+```
+
+67 tests with live output showing exactly what tokencap does at each step.
+Costs roughly $0.001 in API credits total. Each section is documented and easy
+to comment out if you only want to test one provider or one feature.
 
 ---
 
@@ -438,6 +491,13 @@ from tokencap.backends.redis import RedisBackend
 shared = RedisBackend("redis://redis-host:6379")
 ```
 
+In production, read the URL from an environment variable:
+
+```python
+import os
+shared = RedisBackend(os.environ["REDIS_URL"])
+```
+
 ```bash
 pip install tokencap[redis]
 ```
@@ -497,6 +557,11 @@ make lint          # ruff + mypy --strict
 ### Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
+
+### Reporting issues
+
+Bug reports and feature requests are welcome at
+https://github.com/pykul/tokencap/issues
 
 ---
 
@@ -558,7 +623,13 @@ tokencap.wrap(client, limit=None, policy=None, quiet=False)
 ```
 Wraps an Anthropic or OpenAI client (sync or async). `limit` is a token count
 shorthand for BLOCK at 100%. `policy` accepts a full `Policy` object. `limit`
-and `policy` are mutually exclusive.
+and `policy` are mutually exclusive. `DimensionPolicy.reset_every` is defined
+but not yet active in v0.1.
+
+If `wrap()` is called a second time while a global Guard is already active
+(without calling `teardown()` first), tokencap logs a WARNING and reuses the
+existing Guard. The new `limit=` or `policy=` argument is ignored. Call
+`tokencap.teardown()` before `wrap()` to start a fresh session.
 
 The wrapped client has `get_status()` directly:
 
@@ -605,6 +676,11 @@ tokencap.ResetPeriod.DAY     # "day"
 All enums inherit from `str`. String values are accepted everywhere for
 backwards compatibility.
 
+`ResetPeriod` is defined and exported but `reset_every` is not yet active.
+Setting `reset_every` on a `DimensionPolicy` has no effect in v0.1. Automatic
+period resets are planned for v0.2. To reset a budget manually, call
+`backend.reset(key)` directly.
+
 ### StatusResponse fields
 
 ```python
@@ -627,6 +703,8 @@ state.pct_used               # float, e.g. 0.624
 tokencap.BudgetExceededError    # e.check_result.violated: list[str]
                                 # e.check_result.states: dict[str, BudgetState]
 tokencap.BackendError           # unrecoverable storage failure
+tokencap.ConfigurationError     # invalid configuration: limit + policy both passed,
+                                # patch() called twice, unknown provider name, etc.
 ```
 
 ---
