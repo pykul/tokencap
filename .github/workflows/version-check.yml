@@ -25,7 +25,9 @@ jobs:
           PR_TITLE_LOWER=$(echo "$PR_TITLE" | tr '[:upper:]' '[:lower:]')
 
           if [ "$PR_VERSION" = "$MAIN_VERSION" ]; then
-            if echo "$PR_TITLE_LOWER" | grep -qE 'release|publish'; then
+            # Only block if the title looks like an actual version release
+            # (contains a semver pattern like v0.1.0, v1.2.3)
+            if echo "$PR_TITLE" | grep -qE 'v[0-9]+\.[0-9]+\.[0-9]+'; then
               echo "::error::Version $PR_VERSION is the same as main. Bump the version in pyproject.toml before publishing."
               exit 1
             fi
