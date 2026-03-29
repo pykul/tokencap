@@ -13,6 +13,10 @@ from tokencap.interceptor.base import call, call_async, call_stream
 
 try:
     import openai
+
+    # Capture original class refs before patch() can replace them
+    _OpenAI = openai.OpenAI
+    _AsyncOpenAI = openai.AsyncOpenAI
 except ImportError as _err:
     raise ImportError(
         "GuardedOpenAI requires the openai package. "
@@ -106,7 +110,7 @@ class GuardedOpenAI:
         self._client = client
         self._guard = guard
         self._provider = provider
-        self._is_async = isinstance(client, openai.AsyncOpenAI)
+        self._is_async = isinstance(client, _AsyncOpenAI)
 
     @property
     def chat(self) -> GuardedChat:

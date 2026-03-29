@@ -33,8 +33,9 @@ uses token counts. Dollar cost is not tracked — tokencap does not maintain
 pricing tables. See D-001 and D-045.
 
 **Never monkey-patch SDK modules globally.** tokencap wraps client objects.
-It does not modify `anthropic.Anthropic`, `openai.OpenAI`, or any other class
-at the module level. See D-004.
+The only exception is `tokencap.patch()`, which is an explicit opt-in function
+that the developer calls by name. `unpatch()` fully reverses the effect.
+See D-004 and D-050.
 
 **Never block the call path in WEBHOOK.** Webhook HTTP posts run in a background
 daemon thread. They must not add latency to LLM calls. See D-008.

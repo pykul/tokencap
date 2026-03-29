@@ -22,11 +22,15 @@ dependencies = []
 [project.optional-dependencies]
 anthropic = ["anthropic"]
 openai = ["openai", "tiktoken"]
-all = ["anthropic", "openai", "tiktoken"]
+redis = ["redis>=4.0"]
+otel = ["opentelemetry-api>=1.0"]
+all = ["anthropic", "openai", "tiktoken", "redis>=4.0", "opentelemetry-api>=1.0"]
 dev = [
     "anthropic",
     "openai",
     "tiktoken",
+    "redis>=4.0",
+    "opentelemetry-api>=1.0",
     "pytest",
     "pytest-httpx",
     "mypy",
@@ -48,7 +52,7 @@ module = [
     "tokencap.backends.redis",
     "tokencap.telemetry.otel",
 ]
-disable_error_code = ["import-not-found"]
+disable_error_code = ["import-not-found", "attr-defined"]
 
 [tool.ruff]
 target-version = "py39"

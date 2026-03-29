@@ -1,11 +1,12 @@
 """tokencap: Token budget enforcement for LLM client SDKs.
 
 Public API surface. All public symbols are listed in __all__.
-No logic beyond the module-level singleton management for the drop-in API.
 """
 
 from __future__ import annotations
 
+import logging
+import sys
 import threading
 from typing import Any
 
@@ -17,6 +18,8 @@ from tokencap.status.api import StatusResponse
 __all__ = [
     "wrap",
     "init",
+    "patch",
+    "unpatch",
     "get_status",
     "teardown",
     "Guard",
@@ -31,6 +34,9 @@ __all__ = [
 
 _guard: Guard | None = None
 _lock = threading.Lock()
+_patched: bool = False
+_original_inits: dict[str, Any] = {}
+_log = logging.getLogger("tokencap")
 
 
 def init(
@@ -55,6 +61,34 @@ def init(
             otel_enabled=otel_enabled,
             quiet=quiet,
         )
+
+
+def _build_guard(
+    limit: int | None, policy: Policy | None, quiet: bool
+) -> Guard:
+    """Build a Guard from limit or policy parameters."""
+    if policy is not None:
+        return Guard(policy=policy, quiet=quiet)
+    if limit is not None:
+        return Guard(
+            policy=Policy(
+                dimensions={
+                    "session": DimensionPolicy(
+                        limit=limit,
+                        thresholds=[
+                            Threshold(at_pct=1.0, actions=[Action(kind="BLOCK")]),
+                        ],
+                    ),
+                }
+            ),
+            quiet=quiet,
+        )
+    return Guard(
+        policy=Policy(
+            dimensions={"session": DimensionPolicy(limit=sys.maxsize)},
+        ),
+        quiet=quiet,
+    )
 
 
 def wrap(
@@ -82,39 +116,144 @@ def wrap(
 
     with _lock:
         if _guard is None:
-            if policy is not None:
-                _guard = Guard(policy=policy, quiet=quiet)
-            elif limit is not None:
-                _guard = Guard(
-                    policy=Policy(
-                        dimensions={
-                            "session": DimensionPolicy(
-                                limit=limit,
-                                thresholds=[
-                                    Threshold(
-                                        at_pct=1.0,
-                                        actions=[Action(kind="BLOCK")],
-                                    ),
-                                ],
-                            ),
-                        }
-                    ),
-                    quiet=quiet,
-                )
-            else:
-                # Tracking only: very large limit, no thresholds
-                import sys as _sys
-
-                _guard = Guard(
-                    policy=Policy(
-                        dimensions={
-                            "session": DimensionPolicy(limit=_sys.maxsize),
-                        }
-                    ),
-                    quiet=quiet,
-                )
+            _guard = _build_guard(limit, policy, quiet)
+        elif limit is not None or policy is not None:
+            _log.warning(
+                "tokencap: wrap() called with a new policy but a Guard is already "
+                "active. The existing Guard will be used. Call teardown() first to "
+                "start a new session."
+            )
 
     return _detect_and_wrap(client, _guard)
+
+
+def patch(
+    limit: int | None = None,
+    policy: Policy | None = None,
+    quiet: bool = False,
+) -> None:
+    """Monkey-patch SDK constructors so all new clients are automatically wrapped.
+
+    Works with agent frameworks that construct SDK clients internally (LangChain,
+    CrewAI, LlamaIndex, AutoGen). Clients constructed after patch() is called are
+    automatically tracked and enforced. Existing client instances are not affected.
+
+    limit and policy are mutually exclusive. Passing both raises ConfigurationError.
+    Call unpatch() to reverse all changes.
+    """
+    global _guard, _patched  # noqa: PLW0603
+
+    if limit is not None and policy is not None:
+        raise ConfigurationError(
+            "patch() accepts limit or policy, not both. "
+            "Use limit=N for a simple token cap, or policy=Policy(...) for full control."
+        )
+
+    with _lock:
+        if _patched:
+            raise ConfigurationError(
+                "tokencap is already patched. Call unpatch() before patching again."
+            )
+
+        _guard = _build_guard(limit, policy, quiet=True)
+        patched_sdks: list[str] = []
+
+        # Patch by replacing classes in the SDK module namespace with
+        # factory functions that construct-then-wrap.
+        try:
+            import anthropic
+
+            _original_inits["anthropic.Anthropic"] = anthropic.Anthropic
+            _original_inits["anthropic.AsyncAnthropic"] = anthropic.AsyncAnthropic
+
+            orig_anth = anthropic.Anthropic
+            orig_async_anth = anthropic.AsyncAnthropic
+
+            def _make_anthropic(*args: Any, **kwargs: Any) -> Any:
+                real = orig_anth(*args, **kwargs)
+                return _guard.wrap_anthropic(real) if _guard is not None else real
+
+            def _make_async_anthropic(*args: Any, **kwargs: Any) -> Any:
+                real = orig_async_anth(*args, **kwargs)
+                return _guard.wrap_anthropic(real) if _guard is not None else real
+
+            anthropic.Anthropic = _make_anthropic  # type: ignore[assignment,misc]
+            anthropic.AsyncAnthropic = _make_async_anthropic  # type: ignore[assignment,misc]
+            patched_sdks.append("anthropic")
+        except ImportError:
+            pass
+
+        try:
+            import openai
+
+            _original_inits["openai.OpenAI"] = openai.OpenAI
+            _original_inits["openai.AsyncOpenAI"] = openai.AsyncOpenAI
+
+            orig_oai = openai.OpenAI
+            orig_async_oai = openai.AsyncOpenAI
+
+            def _make_openai(*args: Any, **kwargs: Any) -> Any:
+                real = orig_oai(*args, **kwargs)
+                return _guard.wrap_openai(real) if _guard is not None else real
+
+            def _make_async_openai(*args: Any, **kwargs: Any) -> Any:
+                real = orig_async_oai(*args, **kwargs)
+                return _guard.wrap_openai(real) if _guard is not None else real
+
+            openai.OpenAI = _make_openai  # type: ignore[assignment,misc]
+            openai.AsyncOpenAI = _make_async_openai  # type: ignore[assignment,misc]
+            patched_sdks.append("openai")
+        except ImportError:
+            pass
+
+        _patched = True
+
+        if not quiet:
+            sdk_str = " + ".join(patched_sdks) if patched_sdks else "none"
+            backend_name = _guard._backend_display_name()
+            dim_policy = list(_guard.policy.dimensions.values())[0]
+            if dim_policy.thresholds:
+                limit_str = f"limit={dim_policy.limit} tokens"
+            else:
+                limit_str = "(no limit set)"
+            print(
+                f"[tokencap] patched: {sdk_str}\n"
+                f"           backend={backend_name} {limit_str}",
+                file=sys.stdout,
+            )
+
+
+def unpatch() -> None:
+    """Reverse all monkey-patches applied by patch() and tear down the Guard."""
+    global _patched  # noqa: PLW0603
+
+    with _lock:
+        if not _patched:
+            return
+
+        try:
+            import anthropic
+
+            if "anthropic.Anthropic" in _original_inits:
+                anthropic.Anthropic = _original_inits.pop("anthropic.Anthropic")  # type: ignore[misc]
+            if "anthropic.AsyncAnthropic" in _original_inits:
+                anthropic.AsyncAnthropic = _original_inits.pop("anthropic.AsyncAnthropic")  # type: ignore[misc]
+        except ImportError:
+            pass
+
+        try:
+            import openai
+
+            if "openai.OpenAI" in _original_inits:
+                openai.OpenAI = _original_inits.pop("openai.OpenAI")  # type: ignore[misc]
+            if "openai.AsyncOpenAI" in _original_inits:
+                openai.AsyncOpenAI = _original_inits.pop("openai.AsyncOpenAI")  # type: ignore[misc]
+        except ImportError:
+            pass
+
+        _patched = False
+
+    teardown()
 
 
 def get_status() -> StatusResponse:
@@ -143,16 +282,28 @@ def _detect_and_wrap(client: Any, guard: Guard) -> Any:
     try:
         import anthropic
 
-        if isinstance(client, (anthropic.Anthropic, anthropic.AsyncAnthropic)):
+        from tokencap.interceptor.anthropic import GuardedAnthropic
+
+        orig_anth = _original_inits.get("anthropic.Anthropic", anthropic.Anthropic)
+        orig_async = _original_inits.get("anthropic.AsyncAnthropic", anthropic.AsyncAnthropic)
+        if isinstance(client, (orig_anth, orig_async)):
             return guard.wrap_anthropic(client)
+        if isinstance(client, GuardedAnthropic):
+            return client  # already wrapped
     except ImportError:
         pass
 
     try:
         import openai
 
-        if isinstance(client, (openai.OpenAI, openai.AsyncOpenAI)):
+        from tokencap.interceptor.openai import GuardedOpenAI
+
+        orig_oai = _original_inits.get("openai.OpenAI", openai.OpenAI)
+        orig_async_oai = _original_inits.get("openai.AsyncOpenAI", openai.AsyncOpenAI)
+        if isinstance(client, (orig_oai, orig_async_oai)):
             return guard.wrap_openai(client)
+        if isinstance(client, GuardedOpenAI):
+            return client  # already wrapped
     except ImportError:
         pass
 

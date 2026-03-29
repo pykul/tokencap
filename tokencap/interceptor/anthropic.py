@@ -13,6 +13,9 @@ from tokencap.interceptor.base import GuardedStream, call, call_async, call_stre
 
 try:
     import anthropic
+
+    # Capture original class refs before patch() can replace them
+    _AsyncAnthropic = anthropic.AsyncAnthropic
 except ImportError as _err:
     raise ImportError(
         "GuardedAnthropic requires the anthropic package. "
@@ -79,7 +82,7 @@ class GuardedAnthropic:
         self._client = client
         self._guard = guard
         self._provider = provider
-        self._is_async = isinstance(client, anthropic.AsyncAnthropic)
+        self._is_async = isinstance(client, _AsyncAnthropic)
 
     @property
     def messages(self) -> GuardedMessages:

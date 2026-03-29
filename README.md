@@ -23,7 +23,20 @@ soft warnings, model degradation, or webhook alerts, whichever fits your use cas
 
 ## Quickstart
 
-Two lines. Your existing code does not change.
+Set your provider API key the same way you normally would:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # Anthropic
+export OPENAI_API_KEY=sk-...          # OpenAI
+```
+
+tokencap works in two modes. Use `wrap()` when you construct SDK clients
+directly. Use `patch()` when an agent framework constructs clients internally
+— it intercepts every client created anywhere in the process automatically.
+
+### Direct client wrapping
+
+Two lines. Works when you control client construction.
 
 ```python
 import tokencap
@@ -43,8 +56,86 @@ print(f"session: {status.dimensions['session'].used} tokens used")
 # session: 312 tokens used
 ```
 
+### Patch mode — for agent frameworks
+
+One line at the top of your script. Works with any framework that uses the
+Anthropic or OpenAI SDKs internally.
+
+**LangChain:**
+
+```python
+import tokencap
+from langchain_anthropic import ChatAnthropic
+
+tokencap.patch(limit=50_000)
+# [tokencap] patched: anthropic + openai
+#            backend=sqlite:tokencap.db limit=50000 tokens
+
+llm = ChatAnthropic(model="claude-sonnet-4-6")
+# ChatAnthropic constructs its own Anthropic client internally.
+# tokencap intercepts it automatically.
+```
+
+**CrewAI:**
+
+```python
+import tokencap
+from crewai import Agent, Task, Crew
+
+tokencap.patch(limit=100_000)
+
+researcher = Agent(
+    role="Researcher",
+    goal="Research the topic",
+    llm="anthropic/claude-sonnet-4-6",
+)
+# All LLM calls made by the crew are tracked and enforced.
+```
+
+In patch mode, status is always via the module-level call:
+
+```python
+status = tokencap.get_status()
+state = status.dimensions["session"]
+print(f"session: {state.used:,} / {state.limit:,} tokens ({state.pct_used:.1%})")
+```
+
+When using `patch()`, tokencap manages clients internally. Use
+`tokencap.get_status()` for status checks. When using `wrap()`,
+`client.get_status()` is available directly on the wrapped client.
+
+`tokencap.patch()` works with any framework that uses the Anthropic or OpenAI
+SDKs internally, including LangChain, CrewAI, LlamaIndex, AutoGen, and the
+OpenAI Agents SDK.
+
+Call `tokencap.unpatch()` to reverse all changes when done.
+
+A few things to know about `patch()` mode:
+- Only clients constructed after `patch()` is called are intercepted.
+- `isinstance(wrapped_client, anthropic.Anthropic)` returns `False`.
+  `.pyi` stubs planned for v0.2 will fix type checker compatibility.
+- `patch()` is for application code only. Do not use it in libraries
+  you publish — it has global side effects.
+- Always call `tokencap.unpatch()` when done, or use a `try`/`finally`.
+
 `wrap()` prints a startup message to stdout so there are no surprises. By default,
 tokencap tracks token usage with no enforcement.
+
+---
+
+## Choosing between wrap() and patch()
+
+| | `wrap()` | `patch()` |
+|---|---|---|
+| You control client construction | Yes | Not required |
+| Works with LangChain, CrewAI, etc. | Only if you inject the client | Yes, automatically |
+| Status call | `client.get_status()` | `tokencap.get_status()` |
+| Global side effects | No | Yes |
+| Recommended for | Direct SDK use, libraries | Framework integration |
+
+With `wrap()`, you call `get_status()` on the client object directly. With
+`patch()`, the client is managed by the framework — use `tokencap.get_status()`
+instead.
 
 ---
 
@@ -344,8 +435,15 @@ shared = RedisBackend("redis://redis-host:6379")
 ```
 
 ```bash
-pip install redis
+pip install tokencap[redis]
 ```
+
+### Async agents
+
+tokencap works with async agents. The backend calls inside `call_async()` are
+synchronous — for most agents this is fine. For high-throughput async agents
+(hundreds of concurrent calls), use RedisBackend which handles concurrency
+better than SQLite.
 
 ### Pre-configuring with init()
 
@@ -361,6 +459,17 @@ tokencap.init(
 client = tokencap.wrap(anthropic.Anthropic())
 ```
 
+In `patch()` mode, `init()` can pre-configure identifiers and backend before
+the framework constructs its clients:
+
+```python
+tokencap.init(
+    policy=tokencap.Policy(...),
+    identifiers={"session": "my-run-id-123"},
+)
+tokencap.patch()  # framework clients are now intercepted
+```
+
 ---
 
 ## Development
@@ -369,7 +478,6 @@ client = tokencap.wrap(anthropic.Anthropic())
 
 ```bash
 pip install -e ".[dev]"
-pip install redis opentelemetry-api
 make test          # unit + integration, no external services needed
 make redis-up      # start local Redis container
 make test-live     # live tests (mock providers, real Redis)
@@ -394,7 +502,7 @@ tokencap emits OpenTelemetry metrics after every call if `opentelemetry-api` is
 installed. No configuration required.
 
 ```bash
-pip install opentelemetry-api
+pip install tokencap[otel]
 ```
 
 | Metric | Type | Labels |
@@ -501,11 +609,24 @@ pip install tokencap
 
 Requires Python 3.9+.
 
-For provider-specific installs: `pip install tokencap[anthropic]`, `pip install tokencap[openai]`, or `pip install tokencap[all]`.
+```bash
+pip install tokencap[anthropic]   # Anthropic SDK
+pip install tokencap[openai]      # OpenAI SDK + tiktoken
+pip install tokencap[redis]       # Redis backend
+pip install tokencap[otel]        # OpenTelemetry
+pip install tokencap[all]         # everything
+```
 
-For distributed mode: `pip install redis`
+---
 
-For OTEL: `pip install opentelemetry-api`
+## Roadmap
+
+v0.2:
+- Google Gemini, Mistral, and Cohere provider support
+- `asyncio.to_thread()` wrapping for async-safe backend calls
+- Periodic budget reset via `reset_every`
+- `.pyi` stub files for correct type checker behavior with `wrap()`
+- Per-call sub-identifier tagging
 
 ---
 

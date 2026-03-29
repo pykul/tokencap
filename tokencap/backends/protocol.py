@@ -63,3 +63,7 @@ class Backend(Protocol):
     def mark_threshold_fired(self, key: BudgetKey, at_pct: float) -> None:
         """Record that the threshold at ``at_pct`` has fired for this key."""
         ...
+
+    def close(self) -> None:
+        """Close backend connections and release resources."""
+        ...

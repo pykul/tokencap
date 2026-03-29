@@ -75,6 +75,9 @@ state is higher than the minor ergonomic difference.
 **Rejected alternative:** Monkey-patching (global SDK modification). Ruled out for
 the reasons above.
 
+**Update (v0.1):** `tokencap.patch()` was added as an explicit opt-in exception
+for framework integration. See D-050.
+
 ---
 
 ## D-005: DEGRADE model map is caller-supplied, not opinionated
@@ -810,6 +813,7 @@ is not reachable, it falls back to `MockRedisClient` and runs the same test.
 ensures the full code path is always exercised. `make redis-up` starts a local
 Redis container for developers who want the real test.
 
+
 ---
 
 ## D-049: get_status() on the wrapped client
@@ -824,3 +828,25 @@ unnecessary indirection. `client.get_status()` works at all three tiers
 because GuardedAnthropic and GuardedOpenAI always hold a reference to their
 Guard. `tokencap.get_status()` remains for cases where the client is not in
 scope (e.g. status checks in a separate monitoring function).
+
+---
+
+## D-050: patch() for framework integration — opt-in monkey-patching
+
+**Decision:** `tokencap.patch()` is an explicit opt-in function that patches
+SDK constructors (`anthropic.Anthropic.__init__`, etc.) so that all newly
+constructed clients are automatically wrapped. `tokencap.unpatch()` fully
+reverses all changes.
+
+**Why:** Agent frameworks like LangChain, CrewAI, LlamaIndex, and AutoGen
+construct SDK clients internally. The developer does not control client
+construction and cannot call `wrap()`. `patch()` solves this by intercepting
+the constructor.
+
+This is an explicit exception to D-004 (no monkey-patching). The key
+differences from invisible global patching:
+- The developer calls `patch()` by name, knowing the effect
+- `unpatch()` fully reverses all changes
+- Only `__init__` is patched, not `messages.create` or other methods
+- `wrap()` remains the recommended approach for direct SDK usage
+- `patch()` prints a startup message showing what was patched
