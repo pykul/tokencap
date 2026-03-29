@@ -10,6 +10,7 @@ import openai
 import pytest
 
 import tokencap
+from tokencap.core.enums import Provider
 from tokencap.core.exceptions import ConfigurationError
 from tokencap.interceptor.anthropic import GuardedAnthropic
 from tokencap.interceptor.openai import GuardedOpenAI
@@ -83,16 +84,16 @@ class TestPatchProviders:
     """Tests for the providers parameter."""
 
     def test_patch_anthropic_only(self) -> None:
-        """providers=["anthropic"] only patches Anthropic, not OpenAI."""
-        tokencap.patch(quiet=True, providers=["anthropic"])
+        """providers=[Provider.ANTHROPIC] only patches Anthropic, not OpenAI."""
+        tokencap.patch(quiet=True, providers=[Provider.ANTHROPIC])
         client = anthropic.Anthropic(api_key="sk-fake")
         assert isinstance(client, GuardedAnthropic)
         oai_client = openai.OpenAI(api_key="sk-fake")
         assert not isinstance(oai_client, GuardedOpenAI)
 
     def test_patch_openai_only(self) -> None:
-        """providers=["openai"] only patches OpenAI, not Anthropic."""
-        tokencap.patch(quiet=True, providers=["openai"])
+        """providers=[Provider.OPENAI] only patches OpenAI, not Anthropic."""
+        tokencap.patch(quiet=True, providers=[Provider.OPENAI])
         oai_client = openai.OpenAI(api_key="sk-fake")
         assert isinstance(oai_client, GuardedOpenAI)
         anth_client = anthropic.Anthropic(api_key="sk-fake")
@@ -109,16 +110,27 @@ class TestPatchProviders:
             tokencap.patch(quiet=True, providers=[])
 
     def test_unpatch_anthropic_only_leaves_openai(self) -> None:
-        """unpatch() after providers=["anthropic"] does not affect OpenAI."""
+        """unpatch() after providers=[Provider.ANTHROPIC] does not affect OpenAI."""
         # Manually patch OpenAI first to verify it is not disturbed
         orig_openai_cls = openai.OpenAI
-        tokencap.patch(quiet=True, providers=["anthropic"])
+        tokencap.patch(quiet=True, providers=[Provider.ANTHROPIC])
         tokencap.unpatch()
         # Anthropic should be restored
         client = anthropic.Anthropic(api_key="sk-fake")
         assert not isinstance(client, GuardedAnthropic)
         # OpenAI class should be unchanged (same object as before patch)
         assert openai.OpenAI is orig_openai_cls
+
+    def test_provider_string_equality(self) -> None:
+        """Provider enum values compare equal to their string equivalents."""
+        assert Provider.ANTHROPIC == "anthropic"
+        assert Provider.OPENAI == "openai"
+
+    def test_patch_providers_string_still_works(self) -> None:
+        """Plain string providers still work for backwards compatibility."""
+        tokencap.patch(quiet=True, providers=["anthropic"])
+        client = anthropic.Anthropic(api_key="sk-fake")
+        assert isinstance(client, GuardedAnthropic)
 
 
 class TestUnpatch:

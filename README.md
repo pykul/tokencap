@@ -67,7 +67,7 @@ Anthropic or OpenAI SDKs internally.
 import tokencap
 from langchain_anthropic import ChatAnthropic
 
-tokencap.patch(limit=50_000, providers=["anthropic"])
+tokencap.patch(limit=50_000, providers=[tokencap.Provider.ANTHROPIC])
 # [tokencap] patched: anthropic
 #            backend=sqlite:tokencap.db limit=50000 tokens
 
@@ -193,15 +193,15 @@ client = tokencap.wrap(
                 thresholds=[
                     tokencap.Threshold(
                         at_pct=0.8,
-                        actions=[tokencap.Action(kind="WARN", callback=on_warn)],
+                        actions=[tokencap.Action(kind=tokencap.ActionKind.WARN, callback=on_warn)],
                     ),
                     tokencap.Threshold(
                         at_pct=0.9,
-                        actions=[tokencap.Action(kind="DEGRADE", degrade_to="claude-haiku-4-5")],
+                        actions=[tokencap.Action(kind=tokencap.ActionKind.DEGRADE, degrade_to="claude-haiku-4-5")],
                     ),
                     tokencap.Threshold(
                         at_pct=1.0,
-                        actions=[tokencap.Action(kind="BLOCK")],
+                        actions=[tokencap.Action(kind=tokencap.ActionKind.BLOCK)],
                     ),
                 ],
             ),
@@ -257,7 +257,7 @@ Fires once when the threshold is crossed. The call proceeds normally.
 ```python
 tokencap.Threshold(
     at_pct=0.8,
-    actions=[tokencap.Action(kind="WARN", callback=on_warn)],
+    actions=[tokencap.Action(kind=tokencap.ActionKind.WARN, callback=on_warn)],
 )
 ```
 
@@ -269,7 +269,7 @@ never changes.
 ```python
 tokencap.Threshold(
     at_pct=0.9,
-    actions=[tokencap.Action(kind="DEGRADE", degrade_to="claude-haiku-4-5")],
+    actions=[tokencap.Action(kind=tokencap.ActionKind.DEGRADE, degrade_to="claude-haiku-4-5")],
 )
 ```
 
@@ -280,7 +280,7 @@ Fires on every call after the threshold is crossed, not just the first.
 ```python
 tokencap.Threshold(
     at_pct=1.0,
-    actions=[tokencap.Action(kind="BLOCK")],
+    actions=[tokencap.Action(kind=tokencap.ActionKind.BLOCK)],
 )
 ```
 
@@ -291,9 +291,12 @@ Fire-and-forget in a background thread. Does not add latency to the call path.
 ```python
 tokencap.Threshold(
     at_pct=0.8,
-    actions=[tokencap.Action(kind="WEBHOOK", webhook_url="https://your-app.com/alerts")],
+    actions=[tokencap.Action(kind=tokencap.ActionKind.WEBHOOK, webhook_url="https://your-app.com/alerts")],
 )
 ```
+
+String values like `"WARN"`, `"BLOCK"`, `"DEGRADE"`, `"WEBHOOK"` also work
+if you prefer: `Action(kind="WARN")` is equivalent to `Action(kind=ActionKind.WARN)`.
 
 ---
 
@@ -406,14 +409,14 @@ Multiple agents on the same machine can share a budget by pointing at the same
 SQLite file:
 
 ```python
-from tokencap import Guard, Policy, DimensionPolicy, Threshold, Action
+from tokencap import Guard, Policy, DimensionPolicy, Threshold, Action, ActionKind
 from tokencap.backends.sqlite import SQLiteBackend
 
 policy = Policy(
     dimensions={
         "tenant_daily": DimensionPolicy(
             limit=1_000_000,
-            thresholds=[Threshold(at_pct=1.0, actions=[Action(kind="BLOCK")])],
+            thresholds=[Threshold(at_pct=1.0, actions=[Action(kind=ActionKind.BLOCK)])],
         ),
     }
 )
@@ -580,8 +583,27 @@ Optional. Pre-configures the global Guard before `wrap()` is called.
 tokencap.patch(limit=None, policy=None, quiet=False, providers=None)
 ```
 Monkey-patches SDK constructors for framework integration. `providers` defaults
-to `["anthropic", "openai"]`. Pass a subset like `providers=["anthropic"]` to
-patch only one SDK. `unpatch()` reverses only what was patched.
+to `[Provider.ANTHROPIC, Provider.OPENAI]`. Pass a subset like
+`providers=[Provider.ANTHROPIC]` to patch only one SDK. String values also
+accepted. `unpatch()` reverses only what was patched.
+
+### Enums
+
+```python
+tokencap.ActionKind.WARN     # "WARN"
+tokencap.ActionKind.BLOCK    # "BLOCK"
+tokencap.ActionKind.DEGRADE  # "DEGRADE"
+tokencap.ActionKind.WEBHOOK  # "WEBHOOK"
+
+tokencap.Provider.ANTHROPIC  # "anthropic"
+tokencap.Provider.OPENAI     # "openai"
+
+tokencap.ResetPeriod.HOUR    # "hour"
+tokencap.ResetPeriod.DAY     # "day"
+```
+
+All enums inherit from `str`. String values are accepted everywhere for
+backwards compatibility.
 
 ### StatusResponse fields
 

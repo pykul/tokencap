@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from tokencap.backends.sqlite import SQLiteBackend
+from tokencap.core.enums import ActionKind, ResetPeriod
 from tokencap.core.guard import Guard
 from tokencap.core.policy import Action, DimensionPolicy, Policy, Threshold
 from tokencap.core.types import BudgetKey, BudgetState, CheckResult, TokenUsage
@@ -19,7 +20,7 @@ from tokencap.core.types import BudgetKey, BudgetState, CheckResult, TokenUsage
 
 
 def make_action(
-    kind: Literal["WARN", "BLOCK", "DEGRADE", "WEBHOOK"] = "WARN",
+    kind: ActionKind = ActionKind.WARN,
     webhook_url: str | None = None,
     degrade_to: str | None = None,
     callback: Any = None,
@@ -39,7 +40,7 @@ def make_threshold(
 def make_dimension_policy(
     limit: int = 10000,
     thresholds: list[Threshold] | None = None,
-    reset_every: Literal["day", "hour"] | None = None,
+    reset_every: ResetPeriod | None = None,
 ) -> DimensionPolicy:
     """Create a DimensionPolicy with overridable defaults."""
     return DimensionPolicy(limit=limit, thresholds=thresholds or [], reset_every=reset_every)

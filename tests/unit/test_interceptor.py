@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.conftest import make_action, make_dimension_policy, make_policy, make_threshold
+from tokencap.core.enums import ActionKind
 from tokencap.core.exceptions import BudgetExceededError
 from tokencap.core.guard import Guard
 from tokencap.core.policy import Policy
@@ -131,7 +132,7 @@ class TestEvaluateThresholds:
         policy = make_policy(dimensions={"session": make_dimension_policy(
             limit=1000,
             thresholds=[make_threshold(at_pct=0.5, actions=[
-                make_action(kind="WARN", callback=callback),
+                make_action(kind=ActionKind.WARN, callback=callback),
             ])],
         )})
         guard = self._make_guard(policy, mock_backend)
@@ -149,7 +150,7 @@ class TestEvaluateThresholds:
         policy = make_policy(dimensions={"session": make_dimension_policy(
             limit=1000,
             thresholds=[make_threshold(at_pct=0.5, actions=[
-                make_action(kind="WARN", callback=callback),
+                make_action(kind=ActionKind.WARN, callback=callback),
             ])],
         )})
         guard = self._make_guard(policy, mock_backend)
@@ -168,7 +169,7 @@ class TestEvaluateThresholds:
         policy = make_policy(dimensions={"session": make_dimension_policy(
             limit=1000,
             thresholds=[make_threshold(at_pct=1.0, actions=[
-                make_action(kind="BLOCK"),
+                make_action(kind=ActionKind.BLOCK),
             ])],
         )})
         guard = self._make_guard(policy, mock_backend)
@@ -186,7 +187,7 @@ class TestEvaluateThresholds:
         policy = make_policy(dimensions={"session": make_dimension_policy(
             limit=1000,
             thresholds=[make_threshold(at_pct=1.0, actions=[
-                make_action(kind="BLOCK"),
+                make_action(kind=ActionKind.BLOCK),
             ])],
         )})
         guard = self._make_guard(policy, mock_backend)
@@ -208,8 +209,8 @@ class TestEvaluateThresholds:
         policy = make_policy(dimensions={"session": make_dimension_policy(
             limit=1000,
             thresholds=[make_threshold(at_pct=1.0, actions=[
-                make_action(kind="WARN", callback=callback),
-                make_action(kind="BLOCK"),
+                make_action(kind=ActionKind.WARN, callback=callback),
+                make_action(kind=ActionKind.BLOCK),
             ])],
         )})
         guard = self._make_guard(policy, mock_backend)
@@ -227,7 +228,7 @@ class TestEvaluateThresholds:
         policy = make_policy(dimensions={"session": make_dimension_policy(
             limit=1000,
             thresholds=[make_threshold(at_pct=0.5, actions=[
-                make_action(kind="DEGRADE", degrade_to="cheap-model"),
+                make_action(kind=ActionKind.DEGRADE, degrade_to="cheap-model"),
             ])],
         )})
         guard = self._make_guard(policy, mock_backend)
@@ -246,8 +247,8 @@ class TestEvaluateThresholds:
         policy = make_policy(dimensions={"session": make_dimension_policy(
             limit=1000,
             thresholds=[make_threshold(at_pct=1.0, actions=[
-                make_action(kind="DEGRADE", degrade_to="cheap-model"),
-                make_action(kind="BLOCK"),
+                make_action(kind=ActionKind.DEGRADE, degrade_to="cheap-model"),
+                make_action(kind=ActionKind.BLOCK),
             ])],
         )})
         guard = self._make_guard(policy, mock_backend)
@@ -264,7 +265,7 @@ class TestEvaluateThresholds:
         policy = make_policy(dimensions={"session": make_dimension_policy(
             limit=1000,
             thresholds=[make_threshold(at_pct=0.5, actions=[
-                make_action(kind="WEBHOOK", webhook_url="http://example.com/hook"),
+                make_action(kind=ActionKind.WEBHOOK, webhook_url="http://example.com/hook"),
             ])],
         )})
         guard = self._make_guard(policy, mock_backend)

@@ -10,6 +10,7 @@ import sys
 import threading
 from typing import Any
 
+from tokencap.core.enums import ActionKind, Provider, ResetPeriod
 from tokencap.core.exceptions import BackendError, BudgetExceededError, ConfigurationError
 from tokencap.core.guard import Guard
 from tokencap.core.policy import Action, DimensionPolicy, Policy, Threshold
@@ -27,6 +28,9 @@ __all__ = [
     "DimensionPolicy",
     "Threshold",
     "Action",
+    "ActionKind",
+    "Provider",
+    "ResetPeriod",
     "BudgetExceededError",
     "BackendError",
     "StatusResponse",
@@ -37,7 +41,7 @@ _lock = threading.Lock()
 _patched: bool = False
 _patched_providers: set[str] = set()
 _original_inits: dict[str, Any] = {}
-_VALID_PROVIDERS = {"anthropic", "openai"}
+_VALID_PROVIDERS = {Provider.ANTHROPIC, Provider.OPENAI}
 _log = logging.getLogger("tokencap")
 
 
@@ -78,7 +82,7 @@ def _build_guard(
                     "session": DimensionPolicy(
                         limit=limit,
                         thresholds=[
-                            Threshold(at_pct=1.0, actions=[Action(kind="BLOCK")]),
+                            Threshold(at_pct=1.0, actions=[Action(kind=ActionKind.BLOCK)]),
                         ],
                     ),
                 }
@@ -133,7 +137,7 @@ def patch(
     limit: int | None = None,
     policy: Policy | None = None,
     quiet: bool = False,
-    providers: list[str] | None = None,
+    providers: list[Provider | str] | None = None,
 ) -> None:
     """Monkey-patch SDK constructors so all new clients are automatically wrapped.
 
@@ -178,7 +182,7 @@ def patch(
 
         # Patch by replacing classes in the SDK module namespace with
         # factory functions that construct-then-wrap.
-        if "anthropic" in target_providers:
+        if Provider.ANTHROPIC in target_providers:
             try:
                 import anthropic
 
@@ -202,7 +206,7 @@ def patch(
             except ImportError:
                 pass
 
-        if "openai" in target_providers:
+        if Provider.OPENAI in target_providers:
             try:
                 import openai
 
@@ -255,7 +259,7 @@ def unpatch() -> None:
         if not _patched:
             return
 
-        if "anthropic" in _patched_providers:
+        if Provider.ANTHROPIC in _patched_providers:
             try:
                 import anthropic
 
@@ -266,7 +270,7 @@ def unpatch() -> None:
             except ImportError:
                 pass
 
-        if "openai" in _patched_providers:
+        if Provider.OPENAI in _patched_providers:
             try:
                 import openai
 

@@ -1349,8 +1349,8 @@ policy = tokencap.Policy(
         "session": tokencap.DimensionPolicy(
             limit=50_000,
             thresholds=[
-                tokencap.Threshold(at_pct=0.8, actions=[tokencap.Action(kind="WARN")]),
-                tokencap.Threshold(at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")]),
+                tokencap.Threshold(at_pct=0.8, actions=[tokencap.Action(kind=tokencap.ActionKind.WARN)]),
+                tokencap.Threshold(at_pct=1.0, actions=[tokencap.Action(kind=tokencap.ActionKind.BLOCK)]),
             ],
         ),
     }
@@ -1419,13 +1419,20 @@ Stdout output can be suppressed with `quiet=True` on `wrap()` or `init()`.
 | `DimensionPolicy` | Per-dimension limit and threshold configuration |
 | `Threshold` | Threshold trigger definition |
 | `Action` | Policy action definition |
+| `ActionKind` | Enum: `WARN`, `BLOCK`, `DEGRADE`, `WEBHOOK`. Used in `Action(kind=...)`. String values also accepted. See D-051. |
+| `Provider` | Enum: `ANTHROPIC`, `OPENAI`. Used in `patch(providers=...)`. String values also accepted. See D-051. |
+| `ResetPeriod` | Enum: `HOUR`, `DAY`. Used in `DimensionPolicy(reset_every=...)`. Planned for v0.2. See D-051. |
 | `BudgetExceededError` | Raised on BLOCK, carries full `CheckResult` |
 | `BackendError` | Raised on unrecoverable storage failures |
 | `StatusResponse` | Returned by `get_status()`. Carries per-dimension `BudgetState`, active policy name, and next unfired threshold. |
-| `patch(limit=None, policy=None, quiet=False, providers=None)` | Monkey-patch SDK constructors for framework integration. `providers` defaults to `["anthropic", "openai"]`; pass a subset to patch only specific SDKs. See D-050. |
+| `patch(limit=None, policy=None, quiet=False, providers=None)` | Monkey-patch SDK constructors for framework integration. `providers` defaults to `[Provider.ANTHROPIC, Provider.OPENAI]`; pass a subset to patch only specific SDKs. See D-050. |
 | `unpatch()` | Reverse all monkey-patches applied by `patch()` |
 
 All other symbols are internal and may change without notice.
+
+All three enums (`ActionKind`, `Provider`, `ResetPeriod`) inherit from `str`,
+so string values continue to work for backwards compatibility:
+`Action(kind="WARN")` and `Action(kind=ActionKind.WARN)` are equivalent.
 
 ### Patch mode (patch())
 

@@ -230,7 +230,7 @@ def test_wrap_anthropic_full_policy_warn() -> tuple[bool, str]:
                 limit=1_000_000,
                 thresholds=[tokencap.Threshold(
                     at_pct=0.01,
-                    actions=[tokencap.Action(kind="WARN", callback=on_warn)],
+                    actions=[tokencap.Action(kind=tokencap.ActionKind.WARN, callback=on_warn)],
                 )],
             ),
         })
@@ -255,7 +255,7 @@ def test_wrap_anthropic_block_action() -> tuple[bool, str]:
             "session": tokencap.DimensionPolicy(
                 limit=1,
                 thresholds=[tokencap.Threshold(
-                    at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")],
+                    at_pct=1.0, actions=[tokencap.Action(kind=tokencap.ActionKind.BLOCK)],
                 )],
             ),
         })
@@ -283,7 +283,7 @@ def test_wrap_anthropic_degrade() -> tuple[bool, str]:
                 thresholds=[tokencap.Threshold(
                     at_pct=0.01,
                     actions=[tokencap.Action(
-                        kind="DEGRADE", degrade_to=ANTHROPIC_MODEL,
+                        kind=tokencap.ActionKind.DEGRADE, degrade_to=ANTHROPIC_MODEL,
                     )],
                 )],
             ),
@@ -314,7 +314,7 @@ def test_wrap_anthropic_webhook() -> tuple[bool, str]:
                 thresholds=[tokencap.Threshold(
                     at_pct=0.01,
                     actions=[tokencap.Action(
-                        kind="WEBHOOK",
+                        kind=tokencap.ActionKind.WEBHOOK,
                         webhook_url="https://httpbin.org/post",
                     )],
                 )],
@@ -600,7 +600,7 @@ def test_wrap_openai_full_policy_warn() -> tuple[bool, str]:
                 limit=1_000_000,
                 thresholds=[tokencap.Threshold(
                     at_pct=0.01,
-                    actions=[tokencap.Action(kind="WARN", callback=on_warn)],
+                    actions=[tokencap.Action(kind=tokencap.ActionKind.WARN, callback=on_warn)],
                 )],
             ),
         })
@@ -625,7 +625,7 @@ def test_wrap_openai_block_action() -> tuple[bool, str]:
             "session": tokencap.DimensionPolicy(
                 limit=1,
                 thresholds=[tokencap.Threshold(
-                    at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")],
+                    at_pct=1.0, actions=[tokencap.Action(kind=tokencap.ActionKind.BLOCK)],
                 )],
             ),
         })
@@ -653,7 +653,7 @@ def test_wrap_openai_degrade() -> tuple[bool, str]:
                 thresholds=[tokencap.Threshold(
                     at_pct=0.01,
                     actions=[tokencap.Action(
-                        kind="DEGRADE", degrade_to=OPENAI_MODEL,
+                        kind=tokencap.ActionKind.DEGRADE, degrade_to=OPENAI_MODEL,
                     )],
                 )],
             ),
@@ -684,7 +684,7 @@ def test_wrap_openai_webhook() -> tuple[bool, str]:
                 thresholds=[tokencap.Threshold(
                     at_pct=0.01,
                     actions=[tokencap.Action(
-                        kind="WEBHOOK",
+                        kind=tokencap.ActionKind.WEBHOOK,
                         webhook_url="https://httpbin.org/post",
                     )],
                 )],
@@ -893,12 +893,12 @@ def test_wrap_openai_teardown_rewrap() -> tuple[bool, str]:
 # ===================================================================
 
 def test_patch_anthropic_wraps() -> tuple[bool, str]:
-    """patch(providers=["anthropic"]) wraps Anthropic constructors."""
+    """patch(providers=[tokencap.Provider.ANTHROPIC]) wraps Anthropic constructors."""
     import anthropic
     import tokencap
     from tokencap.interceptor.anthropic import GuardedAnthropic
     try:
-        tokencap.patch(limit=50_000, quiet=True, providers=["anthropic"])
+        tokencap.patch(limit=50_000, quiet=True, providers=[tokencap.Provider.ANTHROPIC])
         client = anthropic.Anthropic()
         if not isinstance(client, GuardedAnthropic):
             return False, f"got {type(client).__name__}, expected GuardedAnthropic"
@@ -908,11 +908,11 @@ def test_patch_anthropic_wraps() -> tuple[bool, str]:
 
 
 def test_patch_anthropic_tracking() -> tuple[bool, str]:
-    """patch(providers=["anthropic"]) + make call + verify get_status()."""
+    """patch(providers=[tokencap.Provider.ANTHROPIC]) + make call + verify get_status()."""
     import anthropic
     import tokencap
     try:
-        tokencap.patch(limit=50_000, quiet=True, providers=["anthropic"])
+        tokencap.patch(limit=50_000, quiet=True, providers=[tokencap.Provider.ANTHROPIC])
         client = anthropic.Anthropic()
         client.messages.create(
             model=ANTHROPIC_MODEL, max_tokens=10,
@@ -929,11 +929,11 @@ def test_patch_anthropic_tracking() -> tuple[bool, str]:
 
 
 def test_patch_anthropic_limit_blocks() -> tuple[bool, str]:
-    """patch(limit=1, providers=["anthropic"]) — BudgetExceededError raised."""
+    """patch(limit=1, providers=[tokencap.Provider.ANTHROPIC]) — BudgetExceededError raised."""
     import anthropic
     import tokencap
     try:
-        tokencap.patch(limit=1, quiet=True, providers=["anthropic"])
+        tokencap.patch(limit=1, quiet=True, providers=[tokencap.Provider.ANTHROPIC])
         client = anthropic.Anthropic()
         try:
             client.messages.create(
@@ -962,11 +962,11 @@ def test_patch_anthropic_warn() -> tuple[bool, str]:
                 limit=1_000_000,
                 thresholds=[tokencap.Threshold(
                     at_pct=0.01,
-                    actions=[tokencap.Action(kind="WARN", callback=on_warn)],
+                    actions=[tokencap.Action(kind=tokencap.ActionKind.WARN, callback=on_warn)],
                 )],
             ),
         })
-        tokencap.patch(policy=policy, quiet=True, providers=["anthropic"])
+        tokencap.patch(policy=policy, quiet=True, providers=[tokencap.Provider.ANTHROPIC])
         client = anthropic.Anthropic()
         client.messages.create(
             model=ANTHROPIC_MODEL, max_tokens=10,
@@ -980,7 +980,7 @@ def test_patch_anthropic_warn() -> tuple[bool, str]:
 
 
 def test_patch_anthropic_degrade() -> tuple[bool, str]:
-    """patch(policy=, providers=["anthropic"]) with DEGRADE at 1% — call succeeds."""
+    """patch(policy=, providers=[tokencap.Provider.ANTHROPIC]) with DEGRADE at 1% — call succeeds."""
     import anthropic
     import tokencap
     try:
@@ -990,12 +990,12 @@ def test_patch_anthropic_degrade() -> tuple[bool, str]:
                 thresholds=[tokencap.Threshold(
                     at_pct=0.01,
                     actions=[tokencap.Action(
-                        kind="DEGRADE", degrade_to=ANTHROPIC_MODEL,
+                        kind=tokencap.ActionKind.DEGRADE, degrade_to=ANTHROPIC_MODEL,
                     )],
                 )],
             ),
         })
-        tokencap.patch(policy=policy, quiet=True, providers=["anthropic"])
+        tokencap.patch(policy=policy, quiet=True, providers=[tokencap.Provider.ANTHROPIC])
         client = anthropic.Anthropic()
         response = client.messages.create(
             model="claude-sonnet-4-6", max_tokens=10,
@@ -1014,7 +1014,7 @@ def test_patch_anthropic_unpatch_restores() -> tuple[bool, str]:
     import tokencap
     from tokencap.interceptor.anthropic import GuardedAnthropic
     try:
-        tokencap.patch(limit=50_000, quiet=True, providers=["anthropic"])
+        tokencap.patch(limit=50_000, quiet=True, providers=[tokencap.Provider.ANTHROPIC])
         tokencap.unpatch()
         client = anthropic.Anthropic()
         if isinstance(client, GuardedAnthropic):
@@ -1029,9 +1029,9 @@ def test_patch_anthropic_double_raises() -> tuple[bool, str]:
     import tokencap
     from tokencap.core.exceptions import ConfigurationError
     try:
-        tokencap.patch(limit=50_000, quiet=True, providers=["anthropic"])
+        tokencap.patch(limit=50_000, quiet=True, providers=[tokencap.Provider.ANTHROPIC])
         try:
-            tokencap.patch(limit=50_000, quiet=True, providers=["anthropic"])
+            tokencap.patch(limit=50_000, quiet=True, providers=[tokencap.Provider.ANTHROPIC])
             return False, "no ConfigurationError raised"
         except ConfigurationError:
             return True, ""
@@ -1044,7 +1044,7 @@ def test_patch_anthropic_get_status_module_level() -> tuple[bool, str]:
     import anthropic
     import tokencap
     try:
-        tokencap.patch(limit=50_000, quiet=True, providers=["anthropic"])
+        tokencap.patch(limit=50_000, quiet=True, providers=[tokencap.Provider.ANTHROPIC])
         client = anthropic.Anthropic()
         client.messages.create(
             model=ANTHROPIC_MODEL, max_tokens=10,
@@ -1066,7 +1066,7 @@ def test_patch_anthropic_unpatch_clears_guard() -> tuple[bool, str]:
     import tokencap
     from tokencap.core.exceptions import ConfigurationError
     try:
-        tokencap.patch(limit=50_000, quiet=True, providers=["anthropic"])
+        tokencap.patch(limit=50_000, quiet=True, providers=[tokencap.Provider.ANTHROPIC])
         tokencap.unpatch()
         try:
             tokencap.get_status()
@@ -1085,12 +1085,12 @@ def test_patch_anthropic_unpatch_clears_guard() -> tuple[bool, str]:
 # ===================================================================
 
 def test_patch_openai_wraps() -> tuple[bool, str]:
-    """patch(providers=["openai"]) wraps OpenAI constructors."""
+    """patch(providers=[tokencap.Provider.OPENAI]) wraps OpenAI constructors."""
     import openai
     import tokencap
     from tokencap.interceptor.openai import GuardedOpenAI
     try:
-        tokencap.patch(limit=50_000, quiet=True, providers=["openai"])
+        tokencap.patch(limit=50_000, quiet=True, providers=[tokencap.Provider.OPENAI])
         client = openai.OpenAI()
         if not isinstance(client, GuardedOpenAI):
             return False, f"got {type(client).__name__}, expected GuardedOpenAI"
@@ -1100,11 +1100,11 @@ def test_patch_openai_wraps() -> tuple[bool, str]:
 
 
 def test_patch_openai_tracking() -> tuple[bool, str]:
-    """patch(providers=["openai"]) + make call + verify get_status()."""
+    """patch(providers=[tokencap.Provider.OPENAI]) + make call + verify get_status()."""
     import openai
     import tokencap
     try:
-        tokencap.patch(limit=50_000, quiet=True, providers=["openai"])
+        tokencap.patch(limit=50_000, quiet=True, providers=[tokencap.Provider.OPENAI])
         client = openai.OpenAI()
         client.chat.completions.create(
             model=OPENAI_MODEL, max_tokens=10,
@@ -1121,11 +1121,11 @@ def test_patch_openai_tracking() -> tuple[bool, str]:
 
 
 def test_patch_openai_limit_blocks() -> tuple[bool, str]:
-    """patch(limit=1, providers=["openai"]) — BudgetExceededError raised."""
+    """patch(limit=1, providers=[tokencap.Provider.OPENAI]) — BudgetExceededError raised."""
     import openai
     import tokencap
     try:
-        tokencap.patch(limit=1, quiet=True, providers=["openai"])
+        tokencap.patch(limit=1, quiet=True, providers=[tokencap.Provider.OPENAI])
         client = openai.OpenAI()
         try:
             client.chat.completions.create(
@@ -1154,11 +1154,11 @@ def test_patch_openai_warn() -> tuple[bool, str]:
                 limit=1_000_000,
                 thresholds=[tokencap.Threshold(
                     at_pct=0.01,
-                    actions=[tokencap.Action(kind="WARN", callback=on_warn)],
+                    actions=[tokencap.Action(kind=tokencap.ActionKind.WARN, callback=on_warn)],
                 )],
             ),
         })
-        tokencap.patch(policy=policy, quiet=True, providers=["openai"])
+        tokencap.patch(policy=policy, quiet=True, providers=[tokencap.Provider.OPENAI])
         client = openai.OpenAI()
         client.chat.completions.create(
             model=OPENAI_MODEL, max_tokens=10,
@@ -1172,7 +1172,7 @@ def test_patch_openai_warn() -> tuple[bool, str]:
 
 
 def test_patch_openai_degrade() -> tuple[bool, str]:
-    """patch(policy=, providers=["openai"]) with DEGRADE at 1% — call succeeds."""
+    """patch(policy=, providers=[tokencap.Provider.OPENAI]) with DEGRADE at 1% — call succeeds."""
     import openai
     import tokencap
     try:
@@ -1182,12 +1182,12 @@ def test_patch_openai_degrade() -> tuple[bool, str]:
                 thresholds=[tokencap.Threshold(
                     at_pct=0.01,
                     actions=[tokencap.Action(
-                        kind="DEGRADE", degrade_to=OPENAI_MODEL,
+                        kind=tokencap.ActionKind.DEGRADE, degrade_to=OPENAI_MODEL,
                     )],
                 )],
             ),
         })
-        tokencap.patch(policy=policy, quiet=True, providers=["openai"])
+        tokencap.patch(policy=policy, quiet=True, providers=[tokencap.Provider.OPENAI])
         client = openai.OpenAI()
         response = client.chat.completions.create(
             model="gpt-4o", max_tokens=10,
@@ -1206,7 +1206,7 @@ def test_patch_openai_unpatch_restores() -> tuple[bool, str]:
     import tokencap
     from tokencap.interceptor.openai import GuardedOpenAI
     try:
-        tokencap.patch(limit=50_000, quiet=True, providers=["openai"])
+        tokencap.patch(limit=50_000, quiet=True, providers=[tokencap.Provider.OPENAI])
         tokencap.unpatch()
         client = openai.OpenAI()
         if isinstance(client, GuardedOpenAI):
@@ -1468,7 +1468,7 @@ def test_warn_fires_once() -> tuple[bool, str]:
                 limit=1_000_000,
                 thresholds=[tokencap.Threshold(
                     at_pct=0.01,
-                    actions=[tokencap.Action(kind="WARN", callback=on_warn)],
+                    actions=[tokencap.Action(kind=tokencap.ActionKind.WARN, callback=on_warn)],
                 )],
             ),
         })
@@ -1498,7 +1498,7 @@ def test_block_fires_every_call() -> tuple[bool, str]:
             "session": tokencap.DimensionPolicy(
                 limit=1,
                 thresholds=[tokencap.Threshold(
-                    at_pct=1.0, actions=[tokencap.Action(kind="BLOCK")],
+                    at_pct=1.0, actions=[tokencap.Action(kind=tokencap.ActionKind.BLOCK)],
                 )],
             ),
         })
@@ -1575,7 +1575,7 @@ def test_patch_unpatch_repatch_cycle() -> tuple[bool, str]:
     import anthropic
     import tokencap
     try:
-        tokencap.patch(limit=50_000, quiet=True, providers=["anthropic"])
+        tokencap.patch(limit=50_000, quiet=True, providers=[tokencap.Provider.ANTHROPIC])
         client1 = anthropic.Anthropic()
         client1.messages.create(
             model=ANTHROPIC_MODEL, max_tokens=10,
@@ -1589,7 +1589,7 @@ def test_patch_unpatch_repatch_cycle() -> tuple[bool, str]:
 
         tokencap.unpatch()
 
-        tokencap.patch(limit=100_000, quiet=True, providers=["anthropic"])
+        tokencap.patch(limit=100_000, quiet=True, providers=[tokencap.Provider.ANTHROPIC])
         client2 = anthropic.Anthropic()
         client2.messages.create(
             model=ANTHROPIC_MODEL, max_tokens=10,

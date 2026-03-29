@@ -13,6 +13,7 @@ import threading
 import urllib.request
 from typing import Any, Callable
 
+from tokencap.core.enums import ActionKind
 from tokencap.core.exceptions import BackendError, BudgetExceededError
 from tokencap.core.guard import Guard
 from tokencap.core.types import BudgetKey, BudgetState, CheckResult, TokenUsage
@@ -54,7 +55,7 @@ def _evaluate_thresholds(
             if state.pct_used < threshold.at_pct:
                 continue
 
-            has_block = any(a.kind == "BLOCK" for a in threshold.actions)
+            has_block = any(a.kind == ActionKind.BLOCK for a in threshold.actions)
             key = BudgetKey(dimension=dim, identifier=guard.identifiers[dim])
 
             if not has_block:
@@ -65,12 +66,12 @@ def _evaluate_thresholds(
 
             # Execute WARN and WEBHOOK actions
             for action in threshold.actions:
-                if action.kind == "WARN" and action.callback:
+                if action.kind == ActionKind.WARN and action.callback:
                     try:
                         action.callback(guard.get_status())
                     except Exception:
                         pass  # WARN callback failure never propagates
-                elif action.kind == "WEBHOOK" and action.webhook_url:
+                elif action.kind == ActionKind.WEBHOOK and action.webhook_url:
                     _fire_webhook(action.webhook_url, guard.get_status())
 
             if has_block:
@@ -85,7 +86,7 @@ def _evaluate_thresholds(
 
             # DEGRADE (only when no BLOCK on this threshold)
             for action in threshold.actions:
-                if action.kind == "DEGRADE" and action.degrade_to:
+                if action.kind == ActionKind.DEGRADE and action.degrade_to:
                     call_kwargs = dict(kwargs)  # copy on first DEGRADE
                     call_kwargs["model"] = action.degrade_to
 

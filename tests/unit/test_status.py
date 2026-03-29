@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from tests.conftest import make_action, make_dimension_policy, make_policy, make_threshold
+from tokencap.core.enums import ActionKind
 from tokencap.core.guard import Guard
 from tokencap.core.types import BudgetKey, BudgetState
 from tokencap.status.api import StatusResponse, get_status
@@ -29,8 +30,8 @@ class TestGetStatus:
         policy = make_policy(dimensions={"session": make_dimension_policy(
             limit=1000,
             thresholds=[
-                make_threshold(at_pct=0.5, actions=[make_action(kind="WARN")]),
-                make_threshold(at_pct=0.8, actions=[make_action(kind="WARN")]),
+                make_threshold(at_pct=0.5, actions=[make_action(kind=ActionKind.WARN)]),
+                make_threshold(at_pct=0.8, actions=[make_action(kind=ActionKind.WARN)]),
             ],
         )})
         key = BudgetKey("session", "test-id")
@@ -51,8 +52,8 @@ class TestGetStatus:
         policy = make_policy(dimensions={"session": make_dimension_policy(
             limit=1000,
             thresholds=[
-                make_threshold(at_pct=0.5, actions=[make_action(kind="WARN")]),
-                make_threshold(at_pct=0.8, actions=[make_action(kind="WARN")]),
+                make_threshold(at_pct=0.5, actions=[make_action(kind=ActionKind.WARN)]),
+                make_threshold(at_pct=0.8, actions=[make_action(kind=ActionKind.WARN)]),
             ],
         )})
         key = BudgetKey("session", "test-id")
@@ -80,7 +81,7 @@ class TestGetStatus:
         policy = make_policy(dimensions={"session": make_dimension_policy(
             limit=1000,
             thresholds=[
-                make_threshold(at_pct=0.5, actions=[make_action(kind="WARN")]),
+                make_threshold(at_pct=0.5, actions=[make_action(kind=ActionKind.WARN)]),
             ],
         )})
         key = BudgetKey("session", "test-id")
@@ -98,11 +99,15 @@ class TestGetStatus:
         policy = make_policy(dimensions={
             "session": make_dimension_policy(
                 limit=1000,
-                thresholds=[make_threshold(at_pct=0.8, actions=[make_action(kind="WARN")])],
+                thresholds=[make_threshold(
+                    at_pct=0.8, actions=[make_action(kind=ActionKind.WARN)],
+                )],
             ),
             "tenant": make_dimension_policy(
                 limit=5000,
-                thresholds=[make_threshold(at_pct=0.9, actions=[make_action(kind="WARN")])],
+                thresholds=[make_threshold(
+                    at_pct=0.9, actions=[make_action(kind=ActionKind.WARN)],
+                )],
             ),
         })
         session_state = BudgetState(

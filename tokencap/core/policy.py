@@ -8,7 +8,9 @@ beyond invariant checking.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Literal
+from typing import TYPE_CHECKING, Callable
+
+from tokencap.core.enums import ActionKind, ResetPeriod
 
 if TYPE_CHECKING:
     from tokencap.status.api import StatusResponse
@@ -18,10 +20,15 @@ if TYPE_CHECKING:
 class Action:
     """A single action executed when a threshold is crossed."""
 
-    kind: Literal["WARN", "BLOCK", "DEGRADE", "WEBHOOK"]
+    kind: ActionKind
     webhook_url: str | None = None
     degrade_to: str | None = None
     callback: Callable[[StatusResponse], None] | None = None
+
+    def __post_init__(self) -> None:
+        """Coerce string kind to ActionKind for backwards compatibility."""
+        if isinstance(self.kind, str) and not isinstance(self.kind, ActionKind):
+            self.kind = ActionKind(self.kind)
 
 
 @dataclass
@@ -53,10 +60,14 @@ class DimensionPolicy:
 
     limit: int
     thresholds: list[Threshold] = field(default_factory=list)
-    reset_every: Literal["day", "hour"] | None = None
+    reset_every: ResetPeriod | None = None
 
     def __post_init__(self) -> None:
         """Ensure thresholds are always evaluated in ascending order."""
+        if isinstance(self.reset_every, str) and not isinstance(
+            self.reset_every, ResetPeriod
+        ):
+            self.reset_every = ResetPeriod(self.reset_every)
         self.thresholds = sorted(self.thresholds, key=lambda t: t.at_pct)
 
 

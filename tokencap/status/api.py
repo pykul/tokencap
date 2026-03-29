@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from tokencap.core.enums import ActionKind
 from tokencap.core.types import BudgetKey, BudgetState
 
 if TYPE_CHECKING:
@@ -61,7 +62,7 @@ def get_status(guard: Guard) -> StatusResponse:
                 continue
             # Skip BLOCK thresholds from next_threshold — they are exempt
             # from fire-once and always fire, so "next unfired" doesn't apply
-            has_block = any(a.kind == "BLOCK" for a in threshold.actions)
+            has_block = any(a.kind == ActionKind.BLOCK for a in threshold.actions)
             if has_block:
                 continue
             gap = threshold.at_pct - state.pct_used
