@@ -10,11 +10,32 @@ pip install tokencap
 
 ---
 
+## What it is
+
+tokencap is a Python library that gives your AI agents a token budget.
+
+Wrap your Anthropic or OpenAI client, or drop one line at the top of your
+script if you use LangChain, CrewAI, or any other agent framework, and
+tokencap tracks every token your agents spend. Set limits per session, per
+tenant, or per pipeline run. When a budget is hit, tokencap warns, degrades to
+a cheaper model, or blocks the next call before it reaches the provider.
+
+No proxy. No infrastructure. No cloud account. It runs in your process.
+
+```python
+# Direct SDK use
+client = tokencap.wrap(anthropic.Anthropic(), limit=50_000)
+
+# Agent frameworks (LangChain, CrewAI, AutoGen, LlamaIndex)
+tokencap.patch(limit=50_000)
+```
+
+---
+
 ## The problem
 
-AI agents do not behave like normal code. A bug causes a retry loop. An agent
-misreads a response and calls the API 300 times instead of 3. A background job
-runs overnight and nobody notices until the invoice arrives.
+You deploy an AI agent. A bug causes it to retry in a loop. You find out three
+days later when the API bill arrives.
 
 These are not edge cases. They happen constantly:
 
@@ -43,10 +64,6 @@ Set your provider API key the same way you normally would:
 export ANTHROPIC_API_KEY=sk-ant-...   # Anthropic
 export OPENAI_API_KEY=sk-...          # OpenAI
 ```
-
-tokencap works in two modes. Use `wrap()` when you construct SDK clients
-directly. Use `patch()` when an agent framework constructs clients internally.
-It intercepts every client created anywhere in the process automatically.
 
 ### Direct client wrapping
 
