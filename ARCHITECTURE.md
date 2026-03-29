@@ -1760,3 +1760,10 @@ Acceptance criteria:
 - 67 smoke tests pass with `python scripts/smoke_test.py`
   (real Anthropic and OpenAI APIs)
 - `pip install tokencap` then README quickstart works against real provider APIs
+
+### Release process
+
+Releases are automated via `.github/workflows/publish.yml`. Push a version tag
+(`vX.Y.Z`) to main and the workflow builds, checks, and uploads to PyPI via
+OIDC trusted publishing. See the "Release process" section in `CONTRIBUTING.md`
+for the full step-by-step guide.

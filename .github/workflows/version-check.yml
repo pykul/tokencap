@@ -17,17 +17,15 @@ jobs:
           PR_VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           git fetch origin main
           MAIN_VERSION=$(git show origin/main:pyproject.toml | grep '^version' | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          BRANCH="${{ github.head_ref }}"
 
           echo "PR version:   $PR_VERSION"
           echo "Main version: $MAIN_VERSION"
-
-          PR_TITLE="${{ github.event.pull_request.title }}"
-          PR_TITLE_LOWER=$(echo "$PR_TITLE" | tr '[:upper:]' '[:lower:]')
+          echo "Branch:       $BRANCH"
 
           if [ "$PR_VERSION" = "$MAIN_VERSION" ]; then
-            # Only block if the title looks like an actual version release
-            # (contains a semver pattern like v0.1.0, v1.2.3)
-            if echo "$PR_TITLE" | grep -qE 'v[0-9]+\.[0-9]+\.[0-9]+'; then
+            # Only block if the branch is a release branch (release/vX.Y.Z)
+            if echo "$BRANCH" | grep -qE '^release/'; then
               echo "::error::Version $PR_VERSION is the same as main. Bump the version in pyproject.toml before publishing."
               exit 1
             fi
