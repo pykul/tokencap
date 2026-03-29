@@ -1429,16 +1429,77 @@ All other symbols are internal and may change without notice.
 
 ### Patch mode (patch())
 
-`tokencap.patch()` monkey-patches SDK constructors so that all newly
-constructed clients are automatically wrapped. Use it when you do not control
-client construction — e.g., agent frameworks like LangChain, CrewAI, LlamaIndex,
-or AutoGen that construct SDK clients internally.
+#### Why patch mode exists
+
+Most agent frameworks — LangChain, CrewAI, AutoGen, LlamaIndex — construct
+their own SDK client instances internally. The developer does not call
+`anthropic.Anthropic()` directly; the framework does. `wrap()` cannot intercept
+these because it requires a reference to the client object. `patch()` solves
+this by intercepting at the constructor level: once patched, every
+`anthropic.Anthropic()` call anywhere in the process returns a
+`GuardedAnthropic` instead.
+
+#### How the mechanism works
+
+`patch()` stores the original classes `anthropic.Anthropic`,
+`anthropic.AsyncAnthropic`, `openai.OpenAI`, and `openai.AsyncOpenAI`. It
+replaces each in the module namespace with a factory function that calls the
+original constructor, then wraps the newly constructed client against the global
+Guard. `unpatch()` restores all original classes and calls `teardown()` to
+clear the global Guard.
+
+The interception happens at construction time, not at import time. Clients
+constructed before `patch()` is called are not affected. Clients constructed
+after `patch()` is called are automatically wrapped.
 
 `patch()` accepts the same `limit=` and `policy=` parameters as `wrap()`.
-`unpatch()` fully reverses all changes and calls `teardown()`.
 
-Known limitation: only clients constructed after `patch()` is called are
-affected. Existing client instances are not wrapped.
+#### Trade-offs vs wrap()
+
+| | `wrap()` | `patch()` |
+|---|---|---|
+| Client construction | Developer-controlled | Framework-controlled |
+| Testability | Explicit, easy to mock | Global side effect |
+| Status call | `client.get_status()` | `tokencap.get_status()` |
+| Global side effects | No | Yes |
+| Recommended for | Direct SDK use, libraries | Framework integration |
+
+With `wrap()`, the developer holds a reference to the wrapped client and can
+call `client.get_status()` directly. With `patch()`, tokencap manages the
+clients internally and status is only available via `tokencap.get_status()`.
+
+`wrap()` is recommended for direct SDK use. `patch()` is recommended for
+framework integration where client construction is not developer-controlled.
+
+#### Supported frameworks
+
+`patch()` works with any framework that constructs Anthropic or OpenAI clients
+internally, including: LangChain, CrewAI, LlamaIndex, AutoGen, and the OpenAI
+Agents SDK. No framework-specific configuration is needed.
+
+#### Known limitations
+
+- Only clients constructed after `patch()` is called are intercepted. Existing
+  client instances are not retroactively wrapped.
+- `isinstance(wrapped_client, anthropic.Anthropic)` returns `False`. `.pyi`
+  stub files planned for v0.2 will address type checker compatibility.
+- `patch()` is a global side effect. It is not suitable for library code that
+  will be imported by others. Use `wrap()` in libraries. `patch()` is for
+  application-level agent code only.
+- Backend calls in `call_async()` are synchronous. See the async blocking note
+  in the interceptor section.
+
+#### Cleanup
+
+Always call `tokencap.unpatch()` when done:
+
+```python
+tokencap.patch(limit=50_000)
+try:
+    # run your agent
+finally:
+    tokencap.unpatch()
+```
 
 ---
 
@@ -1639,6 +1700,8 @@ Acceptance criteria:
 Deliverables:
 - `tokencap/backends/redis.py`: `RedisBackend` with two Lua scripts
 - `tokencap/telemetry/otel.py`: OTEL emission, no-ops if not installed
+- `tokencap/__init__.py`: `patch()` and `unpatch()` added to public API
+  for opt-in framework integration via monkey-patching
 - Integration test: backend test suite parametrized over both backends
 - `tests/unit/test_backends.py` updated for `RedisBackend` (mocked `redis-py`)
 
@@ -1651,6 +1714,11 @@ Acceptance criteria:
 - `import tokencap` with `opentelemetry-api` absent: OTEL calls are no-ops, no error
 - `RedisBackend(...)` with `redis` absent: raises `ImportError` with install command
 - `mypy --strict` passes on all Phase 4 files
+- `patch()` wraps all `anthropic.Anthropic()` and `openai.OpenAI()` clients
+  constructed after the call
+- `unpatch()` fully restores original SDK constructors
+- `patch()` raises `ConfigurationError` when called twice without `unpatch()`
+- `patch` and `unpatch` are listed in `__all__`
 
 ### Phase 5: Tests + Docs + Publish
 

@@ -30,6 +30,10 @@ export ANTHROPIC_API_KEY=sk-ant-...   # Anthropic
 export OPENAI_API_KEY=sk-...          # OpenAI
 ```
 
+tokencap works in two modes. Use `wrap()` when you construct SDK clients
+directly. Use `patch()` when an agent framework constructs clients internally
+— it intercepts every client created anywhere in the process automatically.
+
 ### Direct client wrapping
 
 Two lines. Works when you control client construction.
@@ -106,8 +110,32 @@ OpenAI Agents SDK.
 
 Call `tokencap.unpatch()` to reverse all changes when done.
 
+A few things to know about `patch()` mode:
+- Only clients constructed after `patch()` is called are intercepted.
+- `isinstance(wrapped_client, anthropic.Anthropic)` returns `False`.
+  `.pyi` stubs planned for v0.2 will fix type checker compatibility.
+- `patch()` is for application code only. Do not use it in libraries
+  you publish — it has global side effects.
+- Always call `tokencap.unpatch()` when done, or use a `try`/`finally`.
+
 `wrap()` prints a startup message to stdout so there are no surprises. By default,
 tokencap tracks token usage with no enforcement.
+
+---
+
+## Choosing between wrap() and patch()
+
+| | `wrap()` | `patch()` |
+|---|---|---|
+| You control client construction | Yes | Not required |
+| Works with LangChain, CrewAI, etc. | Only if you inject the client | Yes, automatically |
+| Status call | `client.get_status()` | `tokencap.get_status()` |
+| Global side effects | No | Yes |
+| Recommended for | Direct SDK use, libraries | Framework integration |
+
+With `wrap()`, you call `get_status()` on the client object directly. With
+`patch()`, the client is managed by the framework — use `tokencap.get_status()`
+instead.
 
 ---
 
@@ -429,6 +457,17 @@ tokencap.init(
 )
 
 client = tokencap.wrap(anthropic.Anthropic())
+```
+
+In `patch()` mode, `init()` can pre-configure identifiers and backend before
+the framework constructs its clients:
+
+```python
+tokencap.init(
+    policy=tokencap.Policy(...),
+    identifiers={"session": "my-run-id-123"},
+)
+tokencap.patch()  # framework clients are now intercepted
 ```
 
 ---
