@@ -5,19 +5,30 @@ build-backend = "hatchling.build"
 [project]
 name = "tokencap"
 version = "0.1.0"
-description = "Token budget enforcement for LLM client SDKs"
+description = "Token usage visibility and budget enforcement for AI agents"
 readme = "README.md"
-license = "MIT"
+license = {text = "Apache-2.0"}
 requires-python = ">=3.9"
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/pykul/tokencap"
+Repository = "https://github.com/pykul/tokencap"
+Issues = "https://github.com/pykul/tokencap/issues"
+Changelog = "https://github.com/pykul/tokencap/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 anthropic = ["anthropic"]
@@ -31,6 +42,8 @@ dev = [
     "tiktoken",
     "redis>=4.0",
     "opentelemetry-api>=1.0",
+    "build",
+    "twine",
     "pytest",
     "pytest-asyncio",
     "pytest-httpx",

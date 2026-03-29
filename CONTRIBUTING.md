@@ -124,6 +124,82 @@ diverges from the spec, update the architecture document to reflect reality.
 `CLAUDE.md` contains standing rules that accumulate as the project matures.
 Every rule exists because something went wrong or almost went wrong without it.
 
+## Release process
+
+This section is for maintainers.
+
+### How to release a new version
+
+1. On main (or a short-lived branch if you want a PR record), bump the version
+   in `pyproject.toml`:
+
+```toml
+version = "X.Y.Z"
+```
+
+2. Update `CHANGELOG.md` with what changed in this version. Use the existing
+   v0.1.0 entry as a template.
+
+3. Commit and push to main:
+
+```bash
+git add pyproject.toml CHANGELOG.md
+git commit -m "bump version to X.Y.Z"
+git push origin main
+```
+
+4. Run the release command:
+
+```bash
+make release VERSION=X.Y.Z
+```
+
+   This runs lint, tests, builds the wheel, runs twine check, creates the tag,
+   and pushes it. The publish GitHub Action fires automatically when the tag is
+   pushed.
+
+   If `pyproject.toml` version does not match VERSION, the command fails before
+   doing anything. Bump the version first.
+
+5. Monitor the publish workflow:
+   https://github.com/pykul/tokencap/actions/workflows/publish.yml
+
+### Version numbering
+
+tokencap follows semantic versioning:
+- Patch (0.1.X): bug fixes, documentation, test improvements
+- Minor (0.X.0): new features, backwards compatible
+- Major (X.0.0): breaking changes to the public API
+
+### PyPI trusted publishing
+
+tokencap uses OIDC trusted publishing. The GitHub Actions workflow authenticates
+to PyPI automatically when a tag is pushed. No API token or secret is stored
+anywhere.
+
+If you ever need to reconfigure this (e.g. after a repo transfer), go to:
+https://pypi.org/manage/project/tokencap/settings/publishing/
+
+### Emergency: if the GitHub Action fails
+
+1. Check the workflow logs at:
+   https://github.com/pykul/tokencap/actions/workflows/publish.yml
+
+2. Common causes:
+   - OIDC not configured on PyPI (see above)
+   - Version already exists on PyPI (cannot re-upload)
+   - Build error (run `python -m build` locally to reproduce)
+
+3. Last resort — manual publish:
+
+```bash
+source ~/.zshrc
+rm -rf dist/
+python -m build
+twine check dist/*
+twine upload dist/*
+```
+
 ## License
 
 Apache 2.0. See `LICENSE`.
