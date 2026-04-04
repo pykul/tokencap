@@ -2,6 +2,15 @@
 
 All notable changes to tokencap are documented here.
 
+## v0.2.0 — Documentation and packaging improvements
+
+### Changed
+- Simplified README with clearer problem framing and "What it is" section
+- Added CONTRIBUTING.md with full development guide
+- Added RELEASING.md with release process documentation
+- Added tag protection documentation
+- Automated PyPI publishing via GitHub Actions on tag push
+
 ## v0.1.0 — Initial release
 
 ### Added
